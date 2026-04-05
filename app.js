@@ -53,7 +53,7 @@ const dom = {
   errorToast: document.getElementById("errorToast"),
 };
 
-const ctx = dom.canvas.getContext("2d", { alpha: false });
+const ctx = dom.canvas.getContext("2d", { alpha: true });
 
 const state = {
   selectedEffect: null,
@@ -584,14 +584,6 @@ function syncEffectPlayback(isVisible) {
   }
 }
 
-function drawBackground(width, height) {
-  ctx.save();
-  ctx.translate(width, 0);
-  ctx.scale(-1, 1);
-  ctx.drawImage(dom.video, 0, 0, width, height);
-  ctx.restore();
-}
-
 function ensureEffectCanvas(workWidth, workHeight) {
   if (
     state.effectCanvas.width !== workWidth
@@ -685,7 +677,6 @@ function drawFrame() {
   const height = window.innerHeight;
   const now = performance.now();
   ctx.clearRect(0, 0, width, height);
-  drawBackground(width, height);
 
   let rightHand = getRightHand(state.latestResults);
   if (rightHand) {
@@ -838,6 +829,7 @@ async function startCamera() {
         dom.video.playsInline = true;
         dom.video.setAttribute("muted", "");
         dom.video.setAttribute("playsinline", "");
+        dom.video.setAttribute("webkit-playsinline", "");
         dom.video.setAttribute("autoplay", "");
         await dom.video.play();
         await waitForVideoReady();
