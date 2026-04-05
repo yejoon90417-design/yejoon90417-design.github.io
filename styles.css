@@ -124,7 +124,13 @@ button {
 }
 
 #cameraVideo {
-  display: none;
+  position: fixed;
+  top: -9999px;
+  left: -9999px;
+  width: 2px;
+  height: 2px;
+  opacity: 0.001;
+  pointer-events: none;
 }
 
 #cameraCanvas {

@@ -101,6 +101,29 @@ function wait(ms) {
   });
 }
 
+function waitForVideoReady(timeoutMs = 2500) {
+  if (dom.video.readyState >= 2) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      dom.video.removeEventListener("loadeddata", finish);
+      dom.video.removeEventListener("canplay", finish);
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const timer = window.setTimeout(finish, timeoutMs);
+    dom.video.addEventListener("loadeddata", finish, { once: true });
+    dom.video.addEventListener("canplay", finish, { once: true });
+  });
+}
+
 function queueCameraTask(task) {
   const nextTask = state.cameraTask.then(task, task);
   state.cameraTask = nextTask.catch(() => {});
@@ -811,7 +834,13 @@ async function startCamera() {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         state.stream = stream;
         dom.video.srcObject = stream;
+        dom.video.muted = true;
+        dom.video.playsInline = true;
+        dom.video.setAttribute("muted", "");
+        dom.video.setAttribute("playsinline", "");
+        dom.video.setAttribute("autoplay", "");
         await dom.video.play();
+        await waitForVideoReady();
         return;
       } catch (error) {
         lastError = error;
@@ -910,14 +939,6 @@ function bindEvents() {
   window.addEventListener("resize", resizeCanvas);
   window.addEventListener("beforeunload", () => {
     stopCamera(true);
-  });
-  window.addEventListener("pagehide", () => {
-    stopExperience();
-  });
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden && state.running) {
-      stopExperience();
-    }
   });
 }
 
