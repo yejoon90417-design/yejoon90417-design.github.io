@@ -27,13 +27,6 @@ const EFFECTS = {
   },
 };
 
-const CAMERA_DPR_CAP = 1.1;
-const CAMERA_TRACK_WIDTH = 640;
-const CAMERA_TRACK_HEIGHT = 360;
-const CAMERA_TRACK_INTERVAL_MS = 75;
-const CAMERA_CAPTURE_WIDTH = 960;
-const CAMERA_CAPTURE_HEIGHT = 540;
-const CAMERA_CAPTURE_FPS = 24;
 const EASY_OPEN_ARM_WINDOW_MS = 2200;
 const EFFECT_EDGE_THRESHOLD = 18;
 const EFFECT_EDGE_SOFTNESS = 54;
@@ -75,6 +68,9 @@ const state = {
   effectVisible: false,
   effectPlaybackActive: false,
   lastGesture: null,
+  runtime: null,
+  cachedRightHand: null,
+  cachedRightHandAt: 0,
   smoothX: null,
   smoothY: null,
   smoothSize: null,
@@ -94,6 +90,33 @@ function clamp(value, min, max) {
 
 function lerp(from, to, ratio) {
   return from + (to - from) * ratio;
+}
+
+function isLikelyMobile() {
+  const ua = navigator.userAgent || "";
+  return (
+    /Android|iPhone|iPad|iPod|Mobile/i.test(ua)
+    || (window.matchMedia && window.matchMedia("(pointer: coarse)").matches)
+    || window.innerWidth <= 900
+  );
+}
+
+function buildRuntimeConfig() {
+  const mobile = isLikelyMobile();
+  return {
+    mobile,
+    dprCap: mobile ? 1.0 : 1.1,
+    trackWidth: mobile ? 768 : 640,
+    trackHeight: mobile ? 432 : 360,
+    trackIntervalMs: mobile ? 45 : 75,
+    captureWidth: mobile ? 1280 : 960,
+    captureHeight: mobile ? 720 : 540,
+    captureFps: mobile ? 30 : 24,
+    modelComplexity: mobile ? 1 : 0,
+    minDetectionConfidence: mobile ? 0.42 : 0.55,
+    minTrackingConfidence: mobile ? 0.38 : 0.5,
+    handLostGraceMs: mobile ? 220 : 140,
+  };
 }
 
 function setScreen(screenName) {
@@ -145,9 +168,9 @@ async function ensureHands() {
 
   hands.setOptions({
     maxNumHands: 1,
-    modelComplexity: 0,
-    minDetectionConfidence: 0.55,
-    minTrackingConfidence: 0.5,
+    modelComplexity: state.runtime.modelComplexity,
+    minDetectionConfidence: state.runtime.minDetectionConfidence,
+    minTrackingConfidence: state.runtime.minTrackingConfidence,
   });
 
   hands.onResults((results) => {
@@ -159,7 +182,7 @@ async function ensureHands() {
 }
 
 function resizeCanvas() {
-  const dpr = Math.min(CAMERA_DPR_CAP, Math.max(1, window.devicePixelRatio || 1));
+  const dpr = Math.min(state.runtime.dprCap, Math.max(1, window.devicePixelRatio || 1));
   const width = window.innerWidth;
   const height = window.innerHeight;
   dom.canvas.width = Math.floor(width * dpr);
@@ -228,7 +251,7 @@ function isFingerExtended(landmarks, tipIndex, pipIndex, mcpIndex) {
   const tip = landmarks[tipIndex];
   const pip = landmarks[pipIndex];
   const mcp = landmarks[mcpIndex];
-  return tip.y < pip.y - 0.012 && pip.y < mcp.y + 0.005;
+  return tip.y < pip.y - 0.008 && pip.y < mcp.y + 0.012;
 }
 
 function areMajorFingersExtended(landmarks) {
@@ -244,21 +267,21 @@ function isTwoSign(landmarks) {
   const wrist = landmarks[0];
   const indexUp = isFingerExtended(landmarks, 8, 6, 5);
   const middleUp = isFingerExtended(landmarks, 12, 10, 9);
-  const ringDown = landmarks[16].y > landmarks[14].y - 0.01;
-  const pinkyDown = landmarks[20].y > landmarks[18].y - 0.01;
+  const ringDown = landmarks[16].y > landmarks[14].y - 0.025;
+  const pinkyDown = landmarks[20].y > landmarks[18].y - 0.025;
   if (!(indexUp && middleUp && ringDown && pinkyDown)) {
     return false;
   }
 
   const guideReach = Math.max(dist(landmarks[8], wrist), dist(landmarks[12], wrist));
-  const thumbFold = dist(landmarks[4], wrist) < guideReach * 1.32;
+  const thumbFold = dist(landmarks[4], wrist) < guideReach * 1.42;
   return thumbFold;
 }
 
 function isThumbFoldedForTwoSign(landmarks) {
   const wrist = landmarks[0];
   const guideReach = Math.max(dist(landmarks[8], wrist), dist(landmarks[12], wrist));
-  return dist(landmarks[4], wrist) < guideReach * 1.32;
+  return dist(landmarks[4], wrist) < guideReach * 1.42;
 }
 
 function isOpenPalm(landmarks) {
@@ -267,20 +290,20 @@ function isOpenPalm(landmarks) {
   }
 
   const bounds = getBounds(landmarks);
-  if (bounds.width < 0.09 || bounds.height < 0.13) {
+  if (bounds.width < 0.07 || bounds.height < 0.1) {
     return false;
   }
 
   const wrist = landmarks[0];
   const tips = [landmarks[4], landmarks[8], landmarks[12], landmarks[16], landmarks[20]];
   const avgTipY = tips.reduce((sum, tip) => sum + tip.y, 0) / tips.length;
-  if (avgTipY > wrist.y - 0.06) {
+  if (avgTipY > wrist.y - 0.045) {
     return false;
   }
 
   const tipSpan = Math.max(landmarks[8].x, landmarks[12].x, landmarks[16].x, landmarks[20].x)
     - Math.min(landmarks[8].x, landmarks[12].x, landmarks[16].x, landmarks[20].x);
-  return tipSpan >= 0.08;
+  return tipSpan >= 0.06;
 }
 
 function classifyRightHandGesture(hand) {
@@ -419,6 +442,10 @@ function getRightHand(results) {
       score: palm.x * 4 + bounds.width * bounds.height,
     };
   });
+
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
 
   const rightLabelCandidates = candidates
     .filter((candidate) => candidate.label === "Right")
@@ -618,10 +645,20 @@ function drawFrame() {
 
   const width = window.innerWidth;
   const height = window.innerHeight;
+  const now = performance.now();
   ctx.clearRect(0, 0, width, height);
   drawBackground(width, height);
 
-  const rightHand = getRightHand(state.latestResults);
+  let rightHand = getRightHand(state.latestResults);
+  if (rightHand) {
+    state.cachedRightHand = rightHand;
+    state.cachedRightHandAt = now;
+  } else if (state.cachedRightHand && now - state.cachedRightHandAt <= state.runtime.handLostGraceMs) {
+    rightHand = state.cachedRightHand;
+  } else {
+    state.cachedRightHand = null;
+  }
+
   const trackingText = updateGestureState(rightHand);
   dom.trackingLabel.textContent = trackingText;
   dom.fingerLabel.textContent = getFingerDebugText(rightHand);
@@ -644,16 +681,15 @@ function renderLoop() {
 
   drawFrame();
 
-  const now = performance.now();
   if (
     state.hands
     && dom.video.readyState >= 2
     && !state.processing
-    && now - state.lastHandSendAt >= CAMERA_TRACK_INTERVAL_MS
+    && now - state.lastHandSendAt >= state.runtime.trackIntervalMs
   ) {
     state.processing = true;
     state.lastHandSendAt = now;
-    state.trackCtx.drawImage(dom.video, 0, 0, CAMERA_TRACK_WIDTH, CAMERA_TRACK_HEIGHT);
+    state.trackCtx.drawImage(dom.video, 0, 0, state.runtime.trackWidth, state.runtime.trackHeight);
     state.hands
       .send({ image: state.trackCanvas })
       .catch((error) => {
@@ -693,9 +729,9 @@ async function startCamera() {
     audio: false,
     video: {
       facingMode: "user",
-      width: { ideal: CAMERA_CAPTURE_WIDTH, max: 1280 },
-      height: { ideal: CAMERA_CAPTURE_HEIGHT, max: 720 },
-      frameRate: { ideal: CAMERA_CAPTURE_FPS, max: 30 },
+      width: { ideal: state.runtime.captureWidth, max: 1280 },
+      height: { ideal: state.runtime.captureHeight, max: 720 },
+      frameRate: { ideal: state.runtime.captureFps, max: 30 },
     },
   });
 
@@ -713,6 +749,8 @@ async function startExperience(effectKey) {
   state.effectPlaybackActive = false;
   state.effectAudioActive = false;
   state.lastGesture = null;
+  state.cachedRightHand = null;
+  state.cachedRightHandAt = 0;
   stopReadyAudio();
   resetSmoothing();
 
@@ -750,6 +788,8 @@ function stopExperience() {
   state.effectVisible = false;
   state.effectPlaybackActive = false;
   state.lastGesture = null;
+  state.cachedRightHand = null;
+  state.cachedRightHandAt = 0;
   stopReadyAudio();
   resetSmoothing();
   syncEffectPlayback(false);
@@ -775,9 +815,10 @@ function bindEvents() {
 }
 
 function boot() {
+  state.runtime = buildRuntimeConfig();
   const trackCanvas = document.createElement("canvas");
-  trackCanvas.width = CAMERA_TRACK_WIDTH;
-  trackCanvas.height = CAMERA_TRACK_HEIGHT;
+  trackCanvas.width = state.runtime.trackWidth;
+  trackCanvas.height = state.runtime.trackHeight;
   const trackCtx = trackCanvas.getContext("2d", { alpha: false });
   trackCtx.imageSmoothingEnabled = true;
   trackCtx.imageSmoothingQuality = "low";
