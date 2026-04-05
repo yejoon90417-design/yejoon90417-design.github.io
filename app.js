@@ -4,10 +4,10 @@ const EFFECTS = {
     source: "assets/naruto.mp4",
     sound: "assets/rasengan.mp3",
     loopStart: 4.0,
-    minRatio: 0.4,
-    baseRatio: 0.4,
-    handRatioScale: 2.25,
-    maxRatio: 1.22,
+    minRatio: 0.5,
+    baseRatio: 0.5,
+    handRatioScale: 2.55,
+    maxRatio: 1.38,
     anchorX: 0.5,
     anchorY: 0.56,
     glow: "rgba(79, 220, 255, 0.95)",
@@ -656,7 +656,8 @@ function drawEffectOverlay(hand, width, height) {
     effect.minRatio,
     effect.maxRatio,
   );
-  const nextSize = width * targetRatio;
+  const viewportBase = state.runtime.mobile ? Math.max(width, height) : width;
+  const nextSize = viewportBase * targetRatio;
 
   state.smoothX = state.smoothX == null ? baseX : lerp(state.smoothX, baseX, 0.24);
   state.smoothY = state.smoothY == null ? baseY : lerp(state.smoothY, baseY, 0.22);
