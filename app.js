@@ -21,6 +21,14 @@ const EFFECTS = {
   },
 };
 
+const CAMERA_DPR_CAP = 1.1;
+const CAMERA_TRACK_WIDTH = 640;
+const CAMERA_TRACK_HEIGHT = 360;
+const CAMERA_TRACK_INTERVAL_MS = 75;
+const CAMERA_CAPTURE_WIDTH = 960;
+const CAMERA_CAPTURE_HEIGHT = 540;
+const CAMERA_CAPTURE_FPS = 24;
+
 const dom = {
   launcher: document.getElementById("launcherScreen"),
   cameraScreen: document.getElementById("cameraScreen"),
@@ -42,10 +50,13 @@ const state = {
   running: false,
   processing: false,
   rafId: 0,
+  lastHandSendAt: 0,
   smoothX: null,
   smoothY: null,
   smoothSize: null,
   effectVideos: {},
+  trackCanvas: null,
+  trackCtx: null,
 };
 
 function clamp(value, min, max) {
@@ -91,7 +102,7 @@ async function ensureHands() {
   });
 
   hands.setOptions({
-    maxNumHands: 2,
+    maxNumHands: 1,
     modelComplexity: 0,
     minDetectionConfidence: 0.55,
     minTrackingConfidence: 0.5,
@@ -106,7 +117,7 @@ async function ensureHands() {
 }
 
 function resizeCanvas() {
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const dpr = Math.min(CAMERA_DPR_CAP, Math.max(1, window.devicePixelRatio || 1));
   const width = window.innerWidth;
   const height = window.innerHeight;
   dom.canvas.width = Math.floor(width * dpr);
@@ -114,6 +125,8 @@ function resizeCanvas() {
   dom.canvas.style.width = `${width}px`;
   dom.canvas.style.height = `${height}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "low";
 }
 
 function getMirroredLandmarks(handLandmarks) {
@@ -214,12 +227,6 @@ function drawBackground(width, height) {
   ctx.scale(-1, 1);
   ctx.drawImage(dom.video, 0, 0, width, height);
   ctx.restore();
-
-  const wash = ctx.createLinearGradient(0, 0, 0, height);
-  wash.addColorStop(0, "rgba(0, 8, 18, 0.10)");
-  wash.addColorStop(1, "rgba(0, 0, 0, 0.28)");
-  ctx.fillStyle = wash;
-  ctx.fillRect(0, 0, width, height);
 }
 
 function drawEffectOverlay(hand, width, height) {
@@ -248,19 +255,9 @@ function drawEffectOverlay(hand, width, height) {
   const drawY = state.smoothY - drawHeight * effect.anchorY;
 
   ctx.save();
-  ctx.globalCompositeOperation = "screen";
-  ctx.filter = `drop-shadow(0 0 36px ${effect.glow})`;
-  ctx.globalAlpha = 0.98;
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = 0.96;
   ctx.drawImage(effectVideo, drawX, drawY, drawWidth, drawHeight);
-
-  ctx.globalAlpha = 0.28;
-  ctx.drawImage(
-    effectVideo,
-    drawX - drawWidth * 0.08,
-    drawY - drawHeight * 0.08,
-    drawWidth * 1.16,
-    drawHeight * 1.16,
-  );
   ctx.restore();
 }
 
@@ -291,10 +288,18 @@ function renderLoop() {
 
   drawFrame();
 
-  if (state.hands && dom.video.readyState >= 2 && !state.processing) {
-    state.processing = true;
+  const now = performance.now();
+  if (
     state.hands
-      .send({ image: dom.video })
+    && dom.video.readyState >= 2
+    && !state.processing
+    && now - state.lastHandSendAt >= CAMERA_TRACK_INTERVAL_MS
+  ) {
+    state.processing = true;
+    state.lastHandSendAt = now;
+    state.trackCtx.drawImage(dom.video, 0, 0, CAMERA_TRACK_WIDTH, CAMERA_TRACK_HEIGHT);
+    state.hands
+      .send({ image: state.trackCanvas })
       .catch((error) => {
         console.error(error);
         showError("손 추적을 다시 불러오지 못했습니다.");
@@ -329,8 +334,9 @@ async function startCamera() {
     audio: false,
     video: {
       facingMode: "user",
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
+      width: { ideal: CAMERA_CAPTURE_WIDTH, max: 1280 },
+      height: { ideal: CAMERA_CAPTURE_HEIGHT, max: 720 },
+      frameRate: { ideal: CAMERA_CAPTURE_FPS, max: 30 },
     },
   });
 
@@ -397,6 +403,14 @@ function bindEvents() {
 }
 
 function boot() {
+  const trackCanvas = document.createElement("canvas");
+  trackCanvas.width = CAMERA_TRACK_WIDTH;
+  trackCanvas.height = CAMERA_TRACK_HEIGHT;
+  const trackCtx = trackCanvas.getContext("2d", { alpha: false });
+  trackCtx.imageSmoothingEnabled = true;
+  trackCtx.imageSmoothingQuality = "low";
+  state.trackCanvas = trackCanvas;
+  state.trackCtx = trackCtx;
   buildEffectVideos();
   bindEvents();
   resizeCanvas();
