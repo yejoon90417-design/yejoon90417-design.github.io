@@ -2,22 +2,26 @@ const EFFECTS = {
   rasengan: {
     label: "나선환",
     source: "assets/naruto.mp4",
-    scale: 6.8,
-    minSize: 260,
-    maxRatio: 0.72,
+    sound: "assets/rasengan.mp3",
+    scale: 8.9,
+    minSize: 420,
+    maxRatio: 0.94,
     anchorX: 0.5,
     anchorY: 0.56,
     glow: "rgba(79, 220, 255, 0.95)",
+    glowAlpha: 0.16,
   },
   chidori: {
     label: "치도리",
     source: "assets/sasuke.mp4",
-    scale: 9.2,
-    minSize: 420,
-    maxRatio: 1.05,
+    sound: "assets/chidori.mp3",
+    scale: 14.2,
+    minSize: 860,
+    maxRatio: 1.34,
     anchorX: 0.45,
     anchorY: 0.52,
     glow: "rgba(140, 196, 255, 0.95)",
+    glowAlpha: 0.18,
   },
 };
 
@@ -28,6 +32,9 @@ const CAMERA_TRACK_INTERVAL_MS = 75;
 const CAMERA_CAPTURE_WIDTH = 960;
 const CAMERA_CAPTURE_HEIGHT = 540;
 const CAMERA_CAPTURE_FPS = 24;
+const EFFECT_EDGE_THRESHOLD = 18;
+const EFFECT_EDGE_SOFTNESS = 54;
+const EFFECT_MAX_WORK_PIXELS = 250000;
 
 const dom = {
   launcher: document.getElementById("launcherScreen"),
@@ -55,8 +62,12 @@ const state = {
   smoothY: null,
   smoothSize: null,
   effectVideos: {},
+  effectAudios: {},
+  effectAudioActive: false,
   trackCanvas: null,
   trackCtx: null,
+  effectCanvas: null,
+  effectCtx: null,
 };
 
 function clamp(value, min, max) {
@@ -87,6 +98,13 @@ function buildEffectVideos() {
     video.playsInline = true;
     video.preload = "auto";
     state.effectVideos[key] = video;
+
+    const audio = document.createElement("audio");
+    audio.src = effect.sound;
+    audio.loop = true;
+    audio.preload = "auto";
+    audio.volume = 1.0;
+    state.effectAudios[key] = audio;
   });
 }
 
@@ -221,11 +239,90 @@ function resetSmoothing() {
   state.smoothSize = null;
 }
 
+function syncEffectAudio(isVisible) {
+  const audio = state.effectAudios[state.selectedEffect];
+  if (!audio) {
+    return;
+  }
+
+  if (isVisible) {
+    if (!state.effectAudioActive) {
+      state.effectAudioActive = true;
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+    }
+    return;
+  }
+
+  if (state.effectAudioActive) {
+    state.effectAudioActive = false;
+    audio.pause();
+    audio.currentTime = 0;
+  }
+}
+
 function drawBackground(width, height) {
   ctx.save();
   ctx.translate(width, 0);
   ctx.scale(-1, 1);
   ctx.drawImage(dom.video, 0, 0, width, height);
+  ctx.restore();
+}
+
+function ensureEffectCanvas(workWidth, workHeight) {
+  if (
+    state.effectCanvas.width !== workWidth
+    || state.effectCanvas.height !== workHeight
+  ) {
+    state.effectCanvas.width = workWidth;
+    state.effectCanvas.height = workHeight;
+  }
+}
+
+function drawMaskedEffectFrame(effectVideo, drawX, drawY, drawWidth, drawHeight, effect) {
+  const area = drawWidth * drawHeight;
+  let workScale = 1;
+  if (area > EFFECT_MAX_WORK_PIXELS) {
+    workScale = Math.sqrt(EFFECT_MAX_WORK_PIXELS / area);
+  }
+
+  const workWidth = Math.max(24, Math.round(drawWidth * workScale));
+  const workHeight = Math.max(24, Math.round(drawHeight * workScale));
+  ensureEffectCanvas(workWidth, workHeight);
+
+  state.effectCtx.clearRect(0, 0, workWidth, workHeight);
+  state.effectCtx.drawImage(effectVideo, 0, 0, workWidth, workHeight);
+  const imageData = state.effectCtx.getImageData(0, 0, workWidth, workHeight);
+  const pixels = imageData.data;
+
+  for (let i = 0; i < pixels.length; i += 4) {
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+    const luma = Math.max(r, g, b);
+    if (luma <= EFFECT_EDGE_THRESHOLD) {
+      pixels[i + 3] = 0;
+      continue;
+    }
+
+    const alpha = clamp((luma - EFFECT_EDGE_THRESHOLD) / EFFECT_EDGE_SOFTNESS, 0, 1);
+    pixels[i + 3] = Math.round(alpha * 255);
+  }
+
+  state.effectCtx.putImageData(imageData, 0, 0);
+
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = 0.98;
+  ctx.drawImage(state.effectCanvas, drawX, drawY, drawWidth, drawHeight);
+  ctx.globalAlpha = effect.glowAlpha;
+  ctx.drawImage(
+    state.effectCanvas,
+    drawX - drawWidth * 0.06,
+    drawY - drawHeight * 0.06,
+    drawWidth * 1.12,
+    drawHeight * 1.12,
+  );
   ctx.restore();
 }
 
@@ -253,12 +350,7 @@ function drawEffectOverlay(hand, width, height) {
   const drawHeight = drawWidth / effectAspect;
   const drawX = state.smoothX - drawWidth * effect.anchorX;
   const drawY = state.smoothY - drawHeight * effect.anchorY;
-
-  ctx.save();
-  ctx.globalCompositeOperation = "lighter";
-  ctx.globalAlpha = 0.96;
-  ctx.drawImage(effectVideo, drawX, drawY, drawWidth, drawHeight);
-  ctx.restore();
+  drawMaskedEffectFrame(effectVideo, drawX, drawY, drawWidth, drawHeight, effect);
 }
 
 function drawFrame() {
@@ -275,9 +367,11 @@ function drawFrame() {
   if (rightHand) {
     dom.trackingLabel.textContent = "오른손 추적중";
     drawEffectOverlay(rightHand, width, height);
+    syncEffectAudio(true);
   } else {
     dom.trackingLabel.textContent = "오른손 대기중";
     resetSmoothing();
+    syncEffectAudio(false);
   }
 }
 
@@ -382,6 +476,7 @@ function stopExperience() {
   state.rafId = 0;
   state.latestResults = null;
   resetSmoothing();
+  syncEffectAudio(false);
   Object.values(state.effectVideos).forEach((video) => video.pause());
   stopCamera();
   setScreen("launcher");
@@ -411,6 +506,8 @@ function boot() {
   trackCtx.imageSmoothingQuality = "low";
   state.trackCanvas = trackCanvas;
   state.trackCtx = trackCtx;
+  state.effectCanvas = document.createElement("canvas");
+  state.effectCtx = state.effectCanvas.getContext("2d", { willReadFrequently: true });
   buildEffectVideos();
   bindEvents();
   resizeCanvas();
