@@ -867,19 +867,22 @@ async function startExperience(effectKey) {
   state.cachedRightHandAt = 0;
   stopReadyAudio();
   resetSmoothing();
+  setScreen("camera");
+  resizeCanvas();
 
   try {
     await ensureHands();
+    await wait(50);
     await startCamera();
     await playSelectedEffect(true);
     state.running = true;
-    setScreen("camera");
     resizeCanvas();
     window.cancelAnimationFrame(state.rafId);
     state.rafId = window.requestAnimationFrame(renderLoop);
   } catch (error) {
     console.error(error);
     state.running = false;
+    setScreen("launcher");
     await stopCamera(true);
     if (error?.name === "NotReadableError" || error?.name === "AbortError") {
       showError("카메라를 다른 앱이나 탭에서 쓰는 중입니다. 다른 카메라 앱과 탭을 닫고 다시 열어 주세요.");
