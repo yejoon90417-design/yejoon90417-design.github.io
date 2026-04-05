@@ -81,6 +81,7 @@ const state = {
   effectAudios: {},
   readyAudio: null,
   effectAudioActive: false,
+  effectAudioFinished: false,
   trackCanvas: null,
   trackCtx: null,
   effectCanvas: null,
@@ -168,9 +169,16 @@ function buildEffectVideos() {
 
     const audio = document.createElement("audio");
     audio.src = effect.sound;
-    audio.loop = true;
+    audio.loop = false;
     audio.preload = "auto";
     audio.volume = 1.0;
+    audio.addEventListener("ended", () => {
+      if (state.selectedEffect === key) {
+        state.effectAudioActive = false;
+        state.effectAudioFinished = true;
+        state.effectVisible = false;
+      }
+    });
     state.effectAudios[key] = audio;
   });
 
@@ -427,12 +435,13 @@ function updateGestureState(hand) {
 
   if (gesture === "two") {
     state.gateArmedUntil = now + EASY_OPEN_ARM_WINDOW_MS;
+    state.effectAudioFinished = false;
     state.effectVisible = false;
     return "검지+중지 인식";
   }
 
   if (gesture === "open") {
-    if (state.gateArmedUntil > now || state.effectVisible) {
+    if ((state.gateArmedUntil > now || state.effectVisible) && !state.effectAudioFinished) {
       state.effectVisible = true;
       return "손 펼침 발동중";
     }
@@ -505,6 +514,7 @@ function syncEffectAudio(isVisible) {
   if (isVisible) {
     if (!state.effectAudioActive) {
       state.effectAudioActive = true;
+      state.effectAudioFinished = false;
       audio.currentTime = 0;
       audio.play().catch(() => {});
     }
@@ -798,6 +808,7 @@ async function startExperience(effectKey) {
   state.effectVisible = false;
   state.effectPlaybackActive = false;
   state.effectAudioActive = false;
+  state.effectAudioFinished = false;
   state.lastGesture = null;
   state.cachedRightHand = null;
   state.cachedRightHandAt = 0;
