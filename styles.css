@@ -1,0 +1,263 @@
+:root {
+  color-scheme: dark;
+  --bg-top: #08111e;
+  --bg-bottom: #05070d;
+  --panel: rgba(9, 13, 22, 0.78);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --text: #f2f6ff;
+  --muted: #b6c0d5;
+  --rasengan-a: #5ce7ff;
+  --rasengan-b: #1a8fff;
+  --chidori-a: #8fd8ff;
+  --chidori-b: #3f6fff;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top, rgba(52, 118, 255, 0.22), transparent 34%),
+    linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+  color: var(--text);
+  font-family: "Segoe UI", "Noto Sans KR", sans-serif;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.screen {
+  display: none;
+  min-height: 100vh;
+}
+
+.screen-active {
+  display: block;
+}
+
+#launcherScreen {
+  padding: 48px 24px 56px;
+}
+
+.hero {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #9ec8ff;
+  font-size: 0.88rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(2.3rem, 4vw, 4.4rem);
+  line-height: 1.04;
+}
+
+.hero-copy {
+  max-width: 700px;
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: clamp(1rem, 1.8vw, 1.2rem);
+  line-height: 1.7;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  max-width: 860px;
+  margin: 34px auto 0;
+}
+
+.effect-card {
+  position: relative;
+  overflow: hidden;
+  padding: 22px 22px 24px;
+  border: 1px solid var(--panel-border);
+  border-radius: 24px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: transform 140ms ease, border-color 140ms ease, filter 140ms ease;
+}
+
+.effect-card:hover {
+  transform: translateY(-3px);
+  filter: brightness(1.05);
+}
+
+.effect-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.9;
+}
+
+.effect-card.rasengan::before {
+  background:
+    radial-gradient(circle at 18% 16%, rgba(92, 231, 255, 0.28), transparent 38%),
+    linear-gradient(135deg, rgba(92, 231, 255, 0.14), rgba(26, 143, 255, 0.03));
+}
+
+.effect-card.chidori::before {
+  background:
+    radial-gradient(circle at 18% 16%, rgba(143, 216, 255, 0.26), transparent 38%),
+    linear-gradient(135deg, rgba(143, 216, 255, 0.14), rgba(63, 111, 255, 0.04));
+}
+
+.effect-card > * {
+  position: relative;
+  z-index: 1;
+  display: block;
+}
+
+.effect-kicker {
+  color: #9fb7e2;
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.effect-card strong {
+  margin-top: 10px;
+  font-size: 1.9rem;
+}
+
+.effect-card span:last-child {
+  margin-top: 12px;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.launcher-note {
+  margin: 18px auto 0;
+  max-width: 860px;
+  color: #90a6cc;
+}
+
+#cameraScreen {
+  position: relative;
+  overflow: hidden;
+  background: #02050a;
+}
+
+#cameraVideo {
+  display: none;
+}
+
+#cameraCanvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+.hud {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.status-chip,
+.back-button,
+.camera-note,
+.error-toast {
+  backdrop-filter: blur(18px);
+  background: rgba(9, 13, 22, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow);
+}
+
+.status-chip {
+  min-width: 180px;
+  padding: 12px 14px;
+  border-radius: 16px;
+}
+
+.status-label {
+  display: block;
+  color: #9cb0d0;
+  font-size: 0.78rem;
+}
+
+.status-chip strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1rem;
+}
+
+.back-button {
+  margin-left: auto;
+  padding: 12px 18px;
+  border-radius: 999px;
+  color: var(--text);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.camera-note {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  color: var(--muted);
+}
+
+.error-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 86px;
+  transform: translateX(-50%);
+  max-width: min(80vw, 540px);
+  padding: 14px 16px;
+  border-radius: 16px;
+  color: #ffd8d4;
+}
+
+@media (max-width: 860px) {
+  #launcherScreen {
+    padding-top: 28px;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hud {
+    flex-wrap: wrap;
+  }
+
+  .back-button {
+    margin-left: 0;
+  }
+
+  .camera-note {
+    right: 18px;
+  }
+}
