@@ -83,8 +83,6 @@ const state = {
   trackCtx: null,
   effectCanvas: null,
   effectCtx: null,
-  cameraTask: Promise.resolve(),
-  channel: null,
 };
 
 function clamp(value, min, max) {
@@ -99,12 +97,6 @@ function wait(ms) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
-}
-
-function queueCameraTask(task) {
-  const nextTask = state.cameraTask.then(task, task);
-  state.cameraTask = nextTask.catch(() => {});
-  return nextTask;
 }
 
 function isLikelyMobile() {
@@ -736,95 +728,55 @@ async function playSelectedEffect(resetTime = false) {
   });
 }
 
-async function releaseCameraNow(releaseOnly = false) {
-  const stream = state.stream ?? dom.video.srcObject;
-  if (dom.video.srcObject) {
-    dom.video.pause();
-    dom.video.srcObject = null;
-    try {
-      dom.video.load();
-    } catch (_error) {
-      // ignore media reset failures
-    }
-  }
-
-  if (stream && typeof stream.getTracks === "function") {
-    stream.getTracks().forEach((track) => {
-      try {
-        track.stop();
-      } catch (_error) {
-        // ignore track stop failures
-      }
-    });
-  }
-
-  state.stream = null;
-  if (releaseOnly) {
-    await wait(220);
-  }
-}
-
-function requestOtherTabsToReleaseCamera() {
-  try {
-    state.channel?.postMessage({ type: "release-camera" });
-  } catch (_error) {
-    // ignore broadcast failures
-  }
-}
-
 async function startCamera() {
-  return queueCameraTask(async () => {
   const liveTrack = state.stream?.getVideoTracks?.().find((track) => track.readyState === "live");
   if (liveTrack) {
     return;
   }
 
-    requestOtherTabsToReleaseCamera();
-    await wait(120);
-    await releaseCameraNow(true);
+  await stopCamera(true);
 
-    const requests = [
-      {
-        audio: false,
-        video: {
-          facingMode: { ideal: "user" },
-          width: { ideal: state.runtime.captureWidth },
-          height: { ideal: state.runtime.captureHeight },
-          frameRate: { ideal: state.runtime.captureFps },
-        },
+  const requests = [
+    {
+      audio: false,
+      video: {
+        facingMode: "user",
+        width: { ideal: state.runtime.captureWidth, max: state.runtime.captureWidth },
+        height: { ideal: state.runtime.captureHeight, max: state.runtime.captureHeight },
+        frameRate: { ideal: state.runtime.captureFps, max: 30 },
       },
-      {
-        audio: false,
-        video: {
-          facingMode: { ideal: "user" },
-        },
+    },
+    {
+      audio: false,
+      video: {
+        facingMode: "user",
       },
-      {
-        audio: false,
-        video: true,
-      },
-    ];
+    },
+    {
+      audio: false,
+      video: true,
+    },
+  ];
 
-    let lastError = null;
-    for (const constraints of requests) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        state.stream = stream;
-        dom.video.srcObject = stream;
-        await dom.video.play();
-        return;
-      } catch (error) {
-        lastError = error;
-        await releaseCameraNow(true);
-        if (error?.name !== "NotReadableError" && error?.name !== "AbortError") {
-          break;
-        }
-        await wait(260);
+  let lastError = null;
+  for (const constraints of requests) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      state.stream = stream;
+      dom.video.srcObject = stream;
+      await dom.video.play();
+      return;
+    } catch (error) {
+      lastError = error;
+      await stopCamera(true);
+      if (error?.name !== "NotReadableError" && error?.name !== "AbortError") {
+        break;
       }
+      await wait(180);
     }
+  }
 
-    throw lastError ?? new Error("Unable to start camera");
-  });
+  throw lastError ?? new Error("Unable to start camera");
 }
 
 async function startExperience(effectKey) {
@@ -871,10 +823,34 @@ async function startExperience(effectKey) {
 }
 
 async function stopCamera(releaseOnly = false) {
-  return queueCameraTask(() => releaseCameraNow(releaseOnly));
+  const stream = state.stream ?? dom.video.srcObject;
+  if (dom.video.srcObject) {
+    dom.video.pause();
+    dom.video.srcObject = null;
+    try {
+      dom.video.load();
+    } catch (_error) {
+      // ignore media reset failures
+    }
+  }
+
+  if (stream && typeof stream.getTracks === "function") {
+    stream.getTracks().forEach((track) => {
+      try {
+        track.stop();
+      } catch (_error) {
+        // ignore track stop failures
+      }
+    });
+  }
+
+  state.stream = null;
+  if (releaseOnly) {
+    await wait(140);
+  }
 }
 
-async function stopExperience() {
+function stopExperience() {
   state.running = false;
   state.starting = false;
   state.processing = false;
@@ -892,7 +868,7 @@ async function stopExperience() {
   syncEffectPlayback(false);
   syncEffectAudio(false);
   Object.values(state.effectVideos).forEach((video) => video.pause());
-  await stopCamera();
+  stopCamera();
   setScreen("launcher");
 }
 
@@ -908,17 +884,7 @@ function bindEvents() {
   });
 
   window.addEventListener("resize", resizeCanvas);
-  window.addEventListener("beforeunload", () => {
-    stopCamera(true);
-  });
-  window.addEventListener("pagehide", () => {
-    stopExperience();
-  });
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden && state.running) {
-      stopExperience();
-    }
-  });
+  window.addEventListener("beforeunload", stopCamera);
 }
 
 function boot() {
@@ -933,14 +899,6 @@ function boot() {
   state.trackCtx = trackCtx;
   state.effectCanvas = document.createElement("canvas");
   state.effectCtx = state.effectCanvas.getContext("2d", { willReadFrequently: true });
-  if ("BroadcastChannel" in window) {
-    state.channel = new BroadcastChannel("naruto-cam-fx-camera");
-    state.channel.addEventListener("message", (event) => {
-      if (event.data?.type === "release-camera" && state.running) {
-        stopExperience();
-      }
-    });
-  }
   buildEffectVideos();
   bindEvents();
   resizeCanvas();
