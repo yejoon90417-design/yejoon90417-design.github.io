@@ -61,7 +61,6 @@ const state = {
   hands: null,
   latestResults: null,
   running: false,
-  starting: false,
   processing: false,
   rafId: 0,
   lastHandSendAt: 0,
@@ -91,12 +90,6 @@ function clamp(value, min, max) {
 
 function lerp(from, to, ratio) {
   return from + (to - from) * ratio;
-}
-
-function wait(ms) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
 }
 
 function isLikelyMobile() {
@@ -687,7 +680,6 @@ function renderLoop() {
   }
 
   drawFrame();
-  const now = performance.now();
 
   if (
     state.hands
@@ -729,62 +721,25 @@ async function playSelectedEffect(resetTime = false) {
 }
 
 async function startCamera() {
-  const liveTrack = state.stream?.getVideoTracks?.().find((track) => track.readyState === "live");
-  if (liveTrack) {
+  if (state.stream) {
     return;
   }
 
-  await stopCamera(true);
-
-  const requests = [
-    {
-      audio: false,
-      video: {
-        facingMode: "user",
-        width: { ideal: state.runtime.captureWidth, max: state.runtime.captureWidth },
-        height: { ideal: state.runtime.captureHeight, max: state.runtime.captureHeight },
-        frameRate: { ideal: state.runtime.captureFps, max: 30 },
-      },
+  state.stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      facingMode: "user",
+      width: { ideal: state.runtime.captureWidth, max: 1280 },
+      height: { ideal: state.runtime.captureHeight, max: 720 },
+      frameRate: { ideal: state.runtime.captureFps, max: 30 },
     },
-    {
-      audio: false,
-      video: {
-        facingMode: "user",
-      },
-    },
-    {
-      audio: false,
-      video: true,
-    },
-  ];
+  });
 
-  let lastError = null;
-  for (const constraints of requests) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      state.stream = stream;
-      dom.video.srcObject = stream;
-      await dom.video.play();
-      return;
-    } catch (error) {
-      lastError = error;
-      await stopCamera(true);
-      if (error?.name !== "NotReadableError" && error?.name !== "AbortError") {
-        break;
-      }
-      await wait(180);
-    }
-  }
-
-  throw lastError ?? new Error("Unable to start camera");
+  dom.video.srcObject = state.stream;
+  await dom.video.play();
 }
 
 async function startExperience(effectKey) {
-  if (state.starting) {
-    return;
-  }
-
-  state.starting = true;
   showError("");
   state.selectedEffect = effectKey;
   dom.effectLabel.textContent = EFFECTS[effectKey].label;
@@ -811,49 +766,21 @@ async function startExperience(effectKey) {
   } catch (error) {
     console.error(error);
     state.running = false;
-    await stopCamera(true);
-    if (error?.name === "NotReadableError" || error?.name === "AbortError") {
-      showError("카메라를 다른 앱이나 탭에서 쓰는 중입니다. 다른 카메라 앱과 탭을 닫고 다시 열어 주세요.");
-    } else {
-      showError("카메라를 열지 못했습니다. 브라우저에서 카메라 권한을 허용해 주세요.");
-    }
-  } finally {
-    state.starting = false;
+    showError("카메라를 열지 못했습니다. 브라우저에서 카메라 권한을 허용해 주세요.");
   }
 }
 
-async function stopCamera(releaseOnly = false) {
-  const stream = state.stream ?? dom.video.srcObject;
-  if (dom.video.srcObject) {
-    dom.video.pause();
-    dom.video.srcObject = null;
-    try {
-      dom.video.load();
-    } catch (_error) {
-      // ignore media reset failures
-    }
+function stopCamera() {
+  if (!state.stream) {
+    return;
   }
-
-  if (stream && typeof stream.getTracks === "function") {
-    stream.getTracks().forEach((track) => {
-      try {
-        track.stop();
-      } catch (_error) {
-        // ignore track stop failures
-      }
-    });
-  }
-
+  state.stream.getTracks().forEach((track) => track.stop());
   state.stream = null;
-  if (releaseOnly) {
-    await wait(140);
-  }
+  dom.video.srcObject = null;
 }
 
 function stopExperience() {
   state.running = false;
-  state.starting = false;
-  state.processing = false;
   window.cancelAnimationFrame(state.rafId);
   state.rafId = 0;
   state.latestResults = null;
