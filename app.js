@@ -1,6 +1,7 @@
 const EFFECTS = {
   rasengan: {
     label: "나선환",
+    mode: "overlay",
     source: "assets/naruto.mp4",
     sound: "assets/rasengan.mp3",
     loopStart: 4.0,
@@ -15,6 +16,7 @@ const EFFECTS = {
   },
   chidori: {
     label: "치도리",
+    mode: "overlay",
     source: "assets/sasuke.mp4",
     sound: "assets/chidori.mp3",
     loopStart: 0.0,
@@ -27,6 +29,10 @@ const EFFECTS = {
     glow: "rgba(140, 196, 255, 0.95)",
     glowAlpha: 0.18,
   },
+  bunshin: {
+    label: "분신술",
+    mode: "bunshin",
+  },
 };
 
 const EASY_OPEN_ARM_WINDOW_MS = 2200;
@@ -34,6 +40,16 @@ const EFFECT_EDGE_THRESHOLD = 18;
 const EFFECT_EDGE_SOFTNESS = 54;
 const EFFECT_MAX_WORK_PIXELS = 250000;
 const READY_SOUND = "assets/ready.mp3";
+const BUNSHIN_LAYOUT = [
+  { x: 0.14, y: 0.2, scale: 0.34, alpha: 0.92 },
+  { x: 0.5, y: 0.17, scale: 0.38, alpha: 0.88 },
+  { x: 0.86, y: 0.2, scale: 0.34, alpha: 0.92 },
+  { x: 0.16, y: 0.55, scale: 0.44, alpha: 0.84 },
+  { x: 0.5, y: 0.54, scale: 0.5, alpha: 0.78 },
+  { x: 0.84, y: 0.55, scale: 0.44, alpha: 0.84 },
+  { x: 0.3, y: 0.86, scale: 0.34, alpha: 0.72 },
+  { x: 0.7, y: 0.86, scale: 0.34, alpha: 0.72 },
+];
 const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
   [0, 5], [5, 6], [6, 7], [7, 8],
@@ -159,27 +175,31 @@ function showError(message) {
 
 function buildEffectVideos() {
   Object.entries(EFFECTS).forEach(([key, effect]) => {
-    const video = document.createElement("video");
-    video.src = effect.source;
-    video.loop = false;
-    video.muted = true;
-    video.playsInline = true;
-    video.preload = "auto";
-    state.effectVideos[key] = video;
+    if (effect.source) {
+      const video = document.createElement("video");
+      video.src = effect.source;
+      video.loop = false;
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      state.effectVideos[key] = video;
+    }
 
-    const audio = document.createElement("audio");
-    audio.src = effect.sound;
-    audio.loop = false;
-    audio.preload = "auto";
-    audio.volume = 1.0;
-    audio.addEventListener("ended", () => {
-      if (state.selectedEffect === key) {
-        state.effectAudioActive = false;
-        state.effectAudioFinished = true;
-        state.effectVisible = false;
-      }
-    });
-    state.effectAudios[key] = audio;
+    if (effect.sound) {
+      const audio = document.createElement("audio");
+      audio.src = effect.sound;
+      audio.loop = false;
+      audio.preload = "auto";
+      audio.volume = 1.0;
+      audio.addEventListener("ended", () => {
+        if (state.selectedEffect === key) {
+          state.effectAudioActive = false;
+          state.effectAudioFinished = true;
+          state.effectVisible = false;
+        }
+      });
+      state.effectAudios[key] = audio;
+    }
   });
 
   const readyAudio = document.createElement("audio");
@@ -427,11 +447,23 @@ function updateGestureState(hand) {
     state.gateArmedUntil = 0;
   }
 
+  const effect = EFFECTS[state.selectedEffect];
   const gesture = classifyRightHandGesture(hand);
   if (gesture === "two" && state.lastGesture !== "two") {
     playReadyAudio();
   }
   state.lastGesture = gesture;
+
+  if (effect?.mode === "bunshin") {
+    if (gesture === "two") {
+      state.effectAudioFinished = false;
+      state.effectVisible = true;
+      return "분신술 발동중";
+    }
+
+    state.effectVisible = false;
+    return hand ? "검지+중지 대기중" : "오른손 대기중";
+  }
 
   if (gesture === "two") {
     state.gateArmedUntil = now + EASY_OPEN_ARM_WINDOW_MS;
@@ -594,6 +626,35 @@ function drawBackground(width, height) {
   ctx.restore();
 }
 
+function drawMirroredVideoRect(x, y, width, height, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x + width, y);
+  ctx.scale(-1, 1);
+  ctx.drawImage(dom.video, 0, 0, width, height);
+  ctx.restore();
+}
+
+function drawBunshinOverlay(width, height) {
+  const pulse = 1 + Math.sin(performance.now() / 180) * 0.02;
+  const frameAspect = height / width;
+
+  BUNSHIN_LAYOUT.forEach((clone, index) => {
+    const cloneWidth = width * clone.scale * pulse;
+    const cloneHeight = cloneWidth * frameAspect;
+    const drawX = clone.x * width - cloneWidth * 0.5;
+    const drawY = clone.y * height - cloneHeight * 0.5;
+    drawMirroredVideoRect(drawX, drawY, cloneWidth, cloneHeight, clone.alpha);
+
+    ctx.save();
+    ctx.globalAlpha = 0.18 + index * 0.01;
+    ctx.strokeStyle = "rgba(233, 243, 255, 0.72)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(drawX, drawY, cloneWidth, cloneHeight);
+    ctx.restore();
+  });
+}
+
 function ensureEffectCanvas(workWidth, workHeight) {
   if (
     state.effectCanvas.width !== workWidth
@@ -715,7 +776,11 @@ function drawFrame() {
   drawHandDebug(rightHand, width, height);
   if (rightHand && state.effectVisible) {
     syncEffectPlayback(true);
-    drawEffectOverlay(rightHand, width, height);
+    if (EFFECTS[state.selectedEffect]?.mode === "bunshin") {
+      drawBunshinOverlay(width, height);
+    } else {
+      drawEffectOverlay(rightHand, width, height);
+    }
     syncEffectAudio(true);
   } else {
     resetSmoothing();
