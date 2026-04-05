@@ -126,18 +126,18 @@ button {
 #cameraVideo {
   position: absolute;
   inset: 0;
-  z-index: 0;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transform: scaleX(-1);
+  transform-origin: center;
   background: #02050a;
 }
 
 #cameraCanvas {
   position: absolute;
   inset: 0;
-  z-index: 1;
   display: block;
   width: 100vw;
   height: 100vh;
