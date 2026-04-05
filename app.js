@@ -38,6 +38,7 @@ const EASY_OPEN_ARM_WINDOW_MS = 2200;
 const EFFECT_EDGE_THRESHOLD = 18;
 const EFFECT_EDGE_SOFTNESS = 54;
 const EFFECT_MAX_WORK_PIXELS = 250000;
+const READY_SOUND = "assets/ready.mp3";
 
 const dom = {
   launcher: document.getElementById("launcherScreen"),
@@ -64,11 +65,13 @@ const state = {
   gateArmedUntil: 0,
   effectVisible: false,
   effectPlaybackActive: false,
+  lastGesture: null,
   smoothX: null,
   smoothY: null,
   smoothSize: null,
   effectVideos: {},
   effectAudios: {},
+  readyAudio: null,
   effectAudioActive: false,
   trackCanvas: null,
   trackCtx: null,
@@ -112,6 +115,12 @@ function buildEffectVideos() {
     audio.volume = 1.0;
     state.effectAudios[key] = audio;
   });
+
+  const readyAudio = document.createElement("audio");
+  readyAudio.src = READY_SOUND;
+  readyAudio.preload = "auto";
+  readyAudio.volume = 1.0;
+  state.readyAudio = readyAudio;
 }
 
 async function ensureHands() {
@@ -272,6 +281,19 @@ function classifyRightHandGesture(hand) {
   return "other";
 }
 
+function playReadyAudio() {
+  if (!state.readyAudio) {
+    return;
+  }
+  try {
+    state.readyAudio.pause();
+    state.readyAudio.currentTime = 0;
+    state.readyAudio.play().catch(() => {});
+  } catch (_error) {
+    // ignore playback errors
+  }
+}
+
 function updateGestureState(hand) {
   const now = performance.now();
   if (state.gateArmedUntil > 0 && now > state.gateArmedUntil) {
@@ -279,6 +301,11 @@ function updateGestureState(hand) {
   }
 
   const gesture = classifyRightHandGesture(hand);
+  if (gesture === "two" && state.lastGesture !== "two") {
+    playReadyAudio();
+  }
+  state.lastGesture = gesture;
+
   if (gesture === "two") {
     state.gateArmedUntil = now + EASY_OPEN_ARM_WINDOW_MS;
     state.effectVisible = false;
@@ -365,6 +392,18 @@ function syncEffectAudio(isVisible) {
     state.effectAudioActive = false;
     audio.pause();
     audio.currentTime = 0;
+  }
+}
+
+function stopReadyAudio() {
+  if (!state.readyAudio) {
+    return;
+  }
+  try {
+    state.readyAudio.pause();
+    state.readyAudio.currentTime = 0;
+  } catch (_error) {
+    // ignore playback errors
   }
 }
 
@@ -605,6 +644,8 @@ async function startExperience(effectKey) {
   state.effectVisible = false;
   state.effectPlaybackActive = false;
   state.effectAudioActive = false;
+  state.lastGesture = null;
+  stopReadyAudio();
   resetSmoothing();
 
   try {
@@ -640,6 +681,8 @@ function stopExperience() {
   state.gateArmedUntil = 0;
   state.effectVisible = false;
   state.effectPlaybackActive = false;
+  state.lastGesture = null;
+  stopReadyAudio();
   resetSmoothing();
   syncEffectPlayback(false);
   syncEffectAudio(false);
