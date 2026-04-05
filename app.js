@@ -98,6 +98,16 @@ const state = {
   readyAudio: null,
   effectAudioActive: false,
   effectAudioFinished: false,
+  segmentation: null,
+  segmentProcessing: false,
+  lastSegmentSendAt: 0,
+  segmentCanvas: null,
+  segmentCtx: null,
+  segmentMaskCanvas: null,
+  segmentMaskCtx: null,
+  personCanvas: null,
+  personCtx: null,
+  personBounds: null,
   trackCanvas: null,
   trackCtx: null,
   effectCanvas: null,
@@ -132,6 +142,10 @@ function buildRuntimeConfig() {
     captureWidth: mobile ? 1280 : 960,
     captureHeight: mobile ? 720 : 540,
     captureFps: mobile ? 30 : 24,
+    segmentWidth: mobile ? 512 : 640,
+    segmentHeight: mobile ? 288 : 360,
+    segmentIntervalMs: mobile ? 66 : 80,
+    segmentThreshold: mobile ? 44 : 52,
     modelComplexity: mobile ? 1 : 0,
     minDetectionConfidence: mobile ? 0.34 : 0.55,
     minTrackingConfidence: mobile ? 0.28 : 0.5,
@@ -171,6 +185,22 @@ function showError(message) {
   }
   dom.errorToast.textContent = message;
   dom.errorToast.hidden = !message;
+}
+
+function ensureCanvasBuffer(key, width, height) {
+  const canvasKey = `${key}Canvas`;
+  const ctxKey = `${key}Ctx`;
+  if (!state[canvasKey]) {
+    state[canvasKey] = document.createElement("canvas");
+    state[ctxKey] = state[canvasKey].getContext("2d", { willReadFrequently: true });
+  }
+
+  if (state[canvasKey].width !== width || state[canvasKey].height !== height) {
+    state[canvasKey].width = width;
+    state[canvasKey].height = height;
+  }
+
+  return state[canvasKey];
 }
 
 function buildEffectVideos() {
@@ -233,6 +263,29 @@ async function ensureHands() {
 
   state.hands = hands;
   return hands;
+}
+
+async function ensureSegmentation() {
+  if (state.segmentation || !window.SelfieSegmentation) {
+    return state.segmentation;
+  }
+
+  const segmentation = new window.SelfieSegmentation({
+    locateFile(file) {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
+    },
+  });
+
+  segmentation.setOptions({
+    modelSelection: 1,
+  });
+
+  segmentation.onResults((results) => {
+    updateBunshinCutout(results);
+  });
+
+  state.segmentation = segmentation;
+  return segmentation;
 }
 
 function resizeCanvas() {
@@ -626,31 +679,106 @@ function drawBackground(width, height) {
   ctx.restore();
 }
 
-function drawMirroredVideoRect(x, y, width, height, alpha) {
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.translate(x + width, y);
-  ctx.scale(-1, 1);
-  ctx.drawImage(dom.video, 0, 0, width, height);
-  ctx.restore();
+function updateBunshinCutout(results) {
+  const source = results?.image;
+  const mask = results?.segmentationMask;
+  if (!source || !mask) {
+    state.personBounds = null;
+    return;
+  }
+
+  const width = source.videoWidth || source.width || state.runtime.segmentWidth;
+  const height = source.videoHeight || source.height || state.runtime.segmentHeight;
+  ensureCanvasBuffer("segmentMask", width, height);
+  ensureCanvasBuffer("person", width, height);
+
+  const maskCtx = state.segmentMaskCtx;
+  const personCtx = state.personCtx;
+  const threshold = state.runtime.segmentThreshold;
+
+  maskCtx.save();
+  maskCtx.clearRect(0, 0, width, height);
+  maskCtx.translate(width, 0);
+  maskCtx.scale(-1, 1);
+  maskCtx.drawImage(mask, 0, 0, width, height);
+  maskCtx.restore();
+
+  const maskData = maskCtx.getImageData(0, 0, width, height).data;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      const value = Math.max(maskData[index], maskData[index + 1], maskData[index + 2]);
+      if (value < threshold) {
+        continue;
+      }
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  if (maxX <= minX || maxY <= minY) {
+    state.personBounds = null;
+    personCtx.clearRect(0, 0, width, height);
+    return;
+  }
+
+  personCtx.save();
+  personCtx.clearRect(0, 0, width, height);
+  personCtx.translate(width, 0);
+  personCtx.scale(-1, 1);
+  personCtx.drawImage(mask, 0, 0, width, height);
+  personCtx.globalCompositeOperation = "source-in";
+  personCtx.drawImage(source, 0, 0, width, height);
+  personCtx.restore();
+  personCtx.globalCompositeOperation = "source-over";
+
+  const padX = Math.round((maxX - minX) * 0.1);
+  const padY = Math.round((maxY - minY) * 0.08);
+  state.personBounds = {
+    x: Math.max(0, minX - padX),
+    y: Math.max(0, minY - padY),
+    width: Math.min(width, maxX - minX + padX * 2),
+    height: Math.min(height, maxY - minY + padY * 2),
+  };
 }
 
 function drawBunshinOverlay(width, height) {
+  if (!state.personCanvas || !state.personBounds) {
+    return;
+  }
+
   const pulse = 1 + Math.sin(performance.now() / 180) * 0.02;
-  const frameAspect = height / width;
+  const sourceBounds = state.personBounds;
+  const frameAspect = sourceBounds.height / sourceBounds.width;
 
   BUNSHIN_LAYOUT.forEach((clone, index) => {
-    const cloneWidth = width * clone.scale * pulse;
-    const cloneHeight = cloneWidth * frameAspect;
+    const cloneHeight = height * clone.scale * pulse;
+    const cloneWidth = cloneHeight / frameAspect;
     const drawX = clone.x * width - cloneWidth * 0.5;
     const drawY = clone.y * height - cloneHeight * 0.5;
-    drawMirroredVideoRect(drawX, drawY, cloneWidth, cloneHeight, clone.alpha);
 
     ctx.save();
-    ctx.globalAlpha = 0.18 + index * 0.01;
-    ctx.strokeStyle = "rgba(233, 243, 255, 0.72)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(drawX, drawY, cloneWidth, cloneHeight);
+    ctx.globalAlpha = clone.alpha;
+    ctx.shadowColor = "rgba(180, 215, 255, 0.22)";
+    ctx.shadowBlur = 16 + index * 2;
+    ctx.drawImage(
+      state.personCanvas,
+      sourceBounds.x,
+      sourceBounds.y,
+      sourceBounds.width,
+      sourceBounds.height,
+      drawX,
+      drawY,
+      cloneWidth,
+      cloneHeight,
+    );
     ctx.restore();
   });
 }
@@ -817,6 +945,26 @@ function renderLoop() {
       });
   }
 
+  if (
+    EFFECTS[state.selectedEffect]?.mode === "bunshin"
+    && state.segmentation
+    && dom.video.readyState >= 2
+    && !state.segmentProcessing
+    && now - state.lastSegmentSendAt >= state.runtime.segmentIntervalMs
+  ) {
+    state.segmentProcessing = true;
+    state.lastSegmentSendAt = now;
+    state.segmentCtx.drawImage(dom.video, 0, 0, state.runtime.segmentWidth, state.runtime.segmentHeight);
+    state.segmentation
+      .send({ image: state.segmentCanvas })
+      .catch((error) => {
+        console.error(error);
+      })
+      .finally(() => {
+        state.segmentProcessing = false;
+      });
+  }
+
   state.rafId = window.requestAnimationFrame(renderLoop);
 }
 
@@ -884,6 +1032,9 @@ async function startExperience(effectKey) {
 
   try {
     await ensureHands();
+    if (EFFECTS[effectKey]?.mode === "bunshin") {
+      await ensureSegmentation();
+    }
     await startCamera();
     await playSelectedEffect(true);
     state.running = true;
@@ -920,6 +1071,9 @@ function stopExperience() {
   state.lastGesture = null;
   state.cachedRightHand = null;
   state.cachedRightHandAt = 0;
+  state.segmentProcessing = false;
+  state.lastSegmentSendAt = 0;
+  state.personBounds = null;
   stopReadyAudio();
   resetSmoothing();
   syncEffectPlayback(false);
@@ -952,6 +1106,14 @@ function boot() {
   trackCtx.imageSmoothingQuality = "low";
   state.trackCanvas = trackCanvas;
   state.trackCtx = trackCtx;
+  const segmentCanvas = document.createElement("canvas");
+  segmentCanvas.width = state.runtime.segmentWidth;
+  segmentCanvas.height = state.runtime.segmentHeight;
+  const segmentCtx = segmentCanvas.getContext("2d", { alpha: false });
+  segmentCtx.imageSmoothingEnabled = true;
+  segmentCtx.imageSmoothingQuality = "low";
+  state.segmentCanvas = segmentCanvas;
+  state.segmentCtx = segmentCtx;
   state.effectCanvas = document.createElement("canvas");
   state.effectCtx = state.effectCanvas.getContext("2d", { willReadFrequently: true });
   buildEffectVideos();
