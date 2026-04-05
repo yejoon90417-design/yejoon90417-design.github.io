@@ -9,30 +9,15 @@
 <body>
   <main class="app-shell">
     <section class="screen screen-active" id="launcherScreen">
-      <div class="hero">
-        <p class="eyebrow">Naruto Cam FX</p>
-        <h1>기술 하나만 고르고 카메라로 들어가세요</h1>
-        <p class="hero-copy">
-          전투 화면은 빼고, 캠 화면만 남겼습니다.
-          선택한 기술은 오른손 하나에만 붙습니다.
-        </p>
-      </div>
-
       <div class="card-grid">
         <button class="effect-card rasengan" data-effect="rasengan" type="button">
-          <span class="effect-kicker">Right Hand</span>
           <strong>나선환</strong>
-          <span>오른손을 추적해서 나선환이 손 위에 붙습니다.</span>
         </button>
 
         <button class="effect-card chidori" data-effect="chidori" type="button">
-          <span class="effect-kicker">Right Hand</span>
           <strong>치도리</strong>
-          <span>오른손을 추적해서 치도리가 손 위에 붙습니다.</span>
         </button>
       </div>
-
-      <p class="launcher-note">카메라 권한을 허용하면 바로 시작됩니다.</p>
     </section>
 
     <section class="screen" id="cameraScreen">
@@ -41,22 +26,15 @@
 
       <div class="hud">
         <div class="status-chip">
-          <span class="status-label">선택된 기술</span>
           <strong id="effectLabel">나선환</strong>
         </div>
         <div class="status-chip">
-          <span class="status-label">카메라 상태</span>
           <strong id="trackingLabel">오른손 대기중</strong>
         </div>
         <div class="status-chip status-chip-wide">
-          <span class="status-label">손가락 판정</span>
           <strong id="fingerLabel">IDX:- MID:- RNG:- PNK:- THB:-</strong>
         </div>
         <button class="back-button" id="backButton" type="button">뒤로</button>
-      </div>
-
-      <div class="camera-note">
-        오른손 하나만 따라갑니다. 검지+중지 후 손을 펼쳐야 기술이 나갑니다.
       </div>
 
       <div class="error-toast" id="errorToast" hidden></div>

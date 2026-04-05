@@ -50,42 +50,16 @@ button {
 }
 
 #launcherScreen {
-  padding: 48px 24px 56px;
-}
-
-.hero {
-  max-width: 860px;
-  margin: 0 auto;
-}
-
-.eyebrow {
-  margin: 0 0 12px;
-  color: #9ec8ff;
-  font-size: 0.88rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.hero h1 {
-  margin: 0;
-  font-size: clamp(2.3rem, 4vw, 4.4rem);
-  line-height: 1.04;
-}
-
-.hero-copy {
-  max-width: 700px;
-  margin: 18px 0 0;
-  color: var(--muted);
-  font-size: clamp(1rem, 1.8vw, 1.2rem);
-  line-height: 1.7;
+  display: grid;
+  place-items: center;
+  padding: 24px;
 }
 
 .card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
-  max-width: 860px;
-  margin: 34px auto 0;
+  width: min(860px, 100%);
 }
 
 .effect-card {
@@ -140,20 +114,7 @@ button {
 }
 
 .effect-card strong {
-  margin-top: 10px;
   font-size: 1.9rem;
-}
-
-.effect-card span:last-child {
-  margin-top: 12px;
-  color: var(--muted);
-  line-height: 1.65;
-}
-
-.launcher-note {
-  margin: 18px auto 0;
-  max-width: 860px;
-  color: #90a6cc;
 }
 
 #cameraScreen {
@@ -185,7 +146,6 @@ button {
 
 .status-chip,
 .back-button,
-.camera-note,
 .error-toast {
   backdrop-filter: blur(18px);
   background: rgba(9, 13, 22, 0.66);
@@ -203,15 +163,8 @@ button {
   min-width: 340px;
 }
 
-.status-label {
-  display: block;
-  color: #9cb0d0;
-  font-size: 0.78rem;
-}
-
 .status-chip strong {
   display: block;
-  margin-top: 4px;
   font-size: 1rem;
   line-height: 1.35;
 }
@@ -223,15 +176,6 @@ button {
   color: var(--text);
   pointer-events: auto;
   cursor: pointer;
-}
-
-.camera-note {
-  position: absolute;
-  left: 18px;
-  bottom: 18px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  color: var(--muted);
 }
 
 .error-toast {
@@ -247,7 +191,7 @@ button {
 
 @media (max-width: 860px) {
   #launcherScreen {
-    padding-top: 28px;
+    padding: 18px;
   }
 
   .card-grid {
@@ -260,9 +204,5 @@ button {
 
   .back-button {
     margin-left: 0;
-  }
-
-  .camera-note {
-    right: 18px;
   }
 }
