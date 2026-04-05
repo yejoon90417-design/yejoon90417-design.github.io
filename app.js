@@ -32,6 +32,7 @@ const CAMERA_TRACK_INTERVAL_MS = 75;
 const CAMERA_CAPTURE_WIDTH = 960;
 const CAMERA_CAPTURE_HEIGHT = 540;
 const CAMERA_CAPTURE_FPS = 24;
+const EASY_OPEN_ARM_WINDOW_MS = 2200;
 const EFFECT_EDGE_THRESHOLD = 18;
 const EFFECT_EDGE_SOFTNESS = 54;
 const EFFECT_MAX_WORK_PIXELS = 250000;
@@ -58,6 +59,8 @@ const state = {
   processing: false,
   rafId: 0,
   lastHandSendAt: 0,
+  gateArmedUntil: 0,
+  effectVisible: false,
   smoothX: null,
   smoothY: null,
   smoothSize: null,
@@ -192,6 +195,107 @@ function getPalmCenter(landmarks) {
     x: total.x / ids.length,
     y: total.y / ids.length,
   };
+}
+
+function dist(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.hypot(dx, dy);
+}
+
+function isFingerExtended(landmarks, tipIndex, pipIndex, mcpIndex) {
+  const tip = landmarks[tipIndex];
+  const pip = landmarks[pipIndex];
+  const mcp = landmarks[mcpIndex];
+  return tip.y < pip.y - 0.012 && pip.y < mcp.y + 0.005;
+}
+
+function areMajorFingersExtended(landmarks) {
+  return (
+    isFingerExtended(landmarks, 8, 6, 5)
+    && isFingerExtended(landmarks, 12, 10, 9)
+    && isFingerExtended(landmarks, 16, 14, 13)
+    && isFingerExtended(landmarks, 20, 18, 17)
+  );
+}
+
+function isTwoSign(landmarks) {
+  const wrist = landmarks[0];
+  const indexUp = isFingerExtended(landmarks, 8, 6, 5);
+  const middleUp = isFingerExtended(landmarks, 12, 10, 9);
+  const ringDown = landmarks[16].y > landmarks[14].y - 0.01;
+  const pinkyDown = landmarks[20].y > landmarks[18].y - 0.01;
+  if (!(indexUp && middleUp && ringDown && pinkyDown)) {
+    return false;
+  }
+
+  const guideReach = Math.max(dist(landmarks[8], wrist), dist(landmarks[12], wrist));
+  const thumbFold = dist(landmarks[4], wrist) < guideReach * 1.32;
+  return thumbFold;
+}
+
+function isOpenPalm(landmarks) {
+  if (!areMajorFingersExtended(landmarks)) {
+    return false;
+  }
+
+  const bounds = getBounds(landmarks);
+  if (bounds.width < 0.09 || bounds.height < 0.13) {
+    return false;
+  }
+
+  const wrist = landmarks[0];
+  const tips = [landmarks[4], landmarks[8], landmarks[12], landmarks[16], landmarks[20]];
+  const avgTipY = tips.reduce((sum, tip) => sum + tip.y, 0) / tips.length;
+  if (avgTipY > wrist.y - 0.06) {
+    return false;
+  }
+
+  const tipSpan = Math.max(landmarks[8].x, landmarks[12].x, landmarks[16].x, landmarks[20].x)
+    - Math.min(landmarks[8].x, landmarks[12].x, landmarks[16].x, landmarks[20].x);
+  return tipSpan >= 0.08;
+}
+
+function classifyRightHandGesture(hand) {
+  if (!hand) {
+    return null;
+  }
+  if (isTwoSign(hand.landmarks)) {
+    return "two";
+  }
+  if (isOpenPalm(hand.landmarks)) {
+    return "open";
+  }
+  return "other";
+}
+
+function updateGestureState(hand) {
+  const now = performance.now();
+  if (state.gateArmedUntil > 0 && now > state.gateArmedUntil) {
+    state.gateArmedUntil = 0;
+  }
+
+  const gesture = classifyRightHandGesture(hand);
+  if (gesture === "two") {
+    state.gateArmedUntil = now + EASY_OPEN_ARM_WINDOW_MS;
+    state.effectVisible = false;
+    return "검지+중지 인식";
+  }
+
+  if (gesture === "open") {
+    if (state.gateArmedUntil > now || state.effectVisible) {
+      state.effectVisible = true;
+      return "손 펼침 발동중";
+    }
+    state.effectVisible = false;
+    return "검지+중지 후 손펼침";
+  }
+
+  state.effectVisible = false;
+  if (state.gateArmedUntil > now) {
+    return "손 펼침 대기중";
+  }
+  return hand ? "검지+중지 대기중" : "오른손 대기중";
 }
 
 function getRightHand(results) {
@@ -364,12 +468,12 @@ function drawFrame() {
   drawBackground(width, height);
 
   const rightHand = getRightHand(state.latestResults);
-  if (rightHand) {
-    dom.trackingLabel.textContent = "오른손 추적중";
+  const trackingText = updateGestureState(rightHand);
+  dom.trackingLabel.textContent = trackingText;
+  if (rightHand && state.effectVisible) {
     drawEffectOverlay(rightHand, width, height);
     syncEffectAudio(true);
   } else {
-    dom.trackingLabel.textContent = "오른손 대기중";
     resetSmoothing();
     syncEffectAudio(false);
   }
@@ -442,7 +546,9 @@ async function startExperience(effectKey) {
   showError("");
   state.selectedEffect = effectKey;
   dom.effectLabel.textContent = EFFECTS[effectKey].label;
-  dom.trackingLabel.textContent = "오른손 대기중";
+  dom.trackingLabel.textContent = "검지+중지 대기중";
+  state.gateArmedUntil = 0;
+  state.effectVisible = false;
   resetSmoothing();
 
   try {
@@ -475,6 +581,8 @@ function stopExperience() {
   window.cancelAnimationFrame(state.rafId);
   state.rafId = 0;
   state.latestResults = null;
+  state.gateArmedUntil = 0;
+  state.effectVisible = false;
   resetSmoothing();
   syncEffectAudio(false);
   Object.values(state.effectVideos).forEach((video) => video.pause());
