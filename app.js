@@ -687,6 +687,7 @@ function renderLoop() {
   }
 
   drawFrame();
+  const now = performance.now();
 
   if (
     state.hands
