@@ -124,11 +124,17 @@ function lerp(from, to, ratio) {
   return from + (to - from) * ratio;
 }
 
-function createVideoElement(src) {
+function createVideoElement(src, options = {}) {
+  const {
+    muted = true,
+    volume = 1.0,
+  } = options;
   const video = document.createElement("video");
   video.src = src;
   video.loop = false;
-  video.muted = true;
+  video.defaultMuted = muted;
+  video.muted = muted;
+  video.volume = volume;
   video.playsInline = true;
   video.preload = "auto";
   video.crossOrigin = "anonymous";
@@ -236,9 +242,9 @@ function buildEffectVideos() {
   });
 
   const deidara = EFFECTS.deidara;
-  state.deidaraVideos.hand = createVideoElement(deidara.handSource);
-  state.deidaraVideos.spider = createVideoElement(deidara.spiderSource);
-  state.deidaraVideos.blast = createVideoElement(deidara.blastSource);
+  state.deidaraVideos.hand = createVideoElement(deidara.handSource, { muted: false, volume: 1.0 });
+  state.deidaraVideos.spider = createVideoElement(deidara.spiderSource, { muted: false, volume: 1.0 });
+  state.deidaraVideos.blast = createVideoElement(deidara.blastSource, { muted: false, volume: 1.0 });
 
   state.deidaraVideos.hand.addEventListener("ended", () => {
     if (state.selectedEffect === "deidara" && state.deidara.stage === "hand") {
