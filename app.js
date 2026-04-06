@@ -57,7 +57,7 @@ const DEFAULT_EFFECT_TUNING = {
   fullscreenScale: 100,
 };
 const TUNING_LIMITS = {
-  scale: { min: 40, max: 240 },
+  scale: { min: 5, max: 240 },
   edgeThreshold: { min: 0, max: 120 },
   edgeSoftness: { min: 1, max: 120 },
   alphaPower: { min: 50, max: 300 },
