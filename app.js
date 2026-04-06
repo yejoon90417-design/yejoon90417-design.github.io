@@ -48,6 +48,9 @@ const READY_SOUND = "assets/ready.mp3";
 const EASY_OPEN_ARM_WINDOW_MS = 2200;
 const EFFECT_MAX_WORK_PIXELS = 700000;
 const FULLSCREEN_EFFECT_MAX_WORK_PIXELS = 1600000;
+const LUMA_EDGE_THRESHOLD = 30;
+const LUMA_EDGE_SOFTNESS = 36;
+const LUMA_ALPHA_POWER = 1.4;
 const TUNING_STORAGE_PREFIX = "naruto-effect-tuning:";
 const VIDEO_TUNING_STORAGE_PREFIX = "naruto-video-tuning:";
 const DEFAULT_EFFECT_TUNING = {
@@ -940,13 +943,13 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, optio
     }
 
     const luma = Math.max(r, g, b);
-    if (luma <= tuning.edgeThreshold) {
+    if (luma <= LUMA_EDGE_THRESHOLD) {
       pixels[i + 3] = 0;
       continue;
     }
 
-    const alpha = clamp((luma - tuning.edgeThreshold) / Math.max(1, tuning.edgeSoftness), 0, 1);
-    pixels[i + 3] = Math.round(Math.pow(alpha, tuning.alphaPower / 100) * 255);
+    const alpha = clamp((luma - LUMA_EDGE_THRESHOLD) / LUMA_EDGE_SOFTNESS, 0, 1);
+    pixels[i + 3] = Math.round(Math.pow(alpha, LUMA_ALPHA_POWER) * 255);
   }
 
   state.effectCtx.putImageData(imageData, 0, 0);
@@ -984,7 +987,7 @@ function drawOverlayEffect(hand, width, height, effect, video) {
     effect.maxRatio,
   );
   const viewportBase = state.runtime.mobile ? Math.max(width, height) : width;
-  const nextSize = viewportBase * targetRatio * (getEffectTuning().scale / 100);
+  const nextSize = viewportBase * targetRatio;
 
   state.smoothX = state.smoothX == null ? baseX : lerp(state.smoothX, baseX, 0.24);
   state.smoothY = state.smoothY == null ? baseY : lerp(state.smoothY, baseY, 0.22);
