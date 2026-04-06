@@ -77,6 +77,14 @@ const DEFAULT_VIDEO_TUNING_BY_ASSET = {
     greenBias: 9,
     despill: 72,
   },
+  spider: {
+    edgeThreshold: 30,
+    edgeSoftness: 59,
+    alphaPower: 295,
+    greenMin: 0,
+    greenBias: 5,
+    despill: 84,
+  },
 };
 const SIZE_CALIBRATION_STORAGE_KEY = "naruto-size-calibration:deidara";
 const DEFAULT_DEIDARA_SIZE_POINTS = [
