@@ -47,6 +47,7 @@ const EFFECTS = {
 const READY_SOUND = "assets/ready.mp3";
 const EASY_OPEN_ARM_WINDOW_MS = 2200;
 const EFFECT_MAX_WORK_PIXELS = 700000;
+const FULLSCREEN_EFFECT_MAX_WORK_PIXELS = 1600000;
 const TUNING_STORAGE_PREFIX = "naruto-effect-tuning:";
 const DEFAULT_EFFECT_TUNING = {
   scale: 100,
@@ -852,12 +853,14 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, optio
     baseAlpha = 0.98,
     blendMode = "lighter",
     glowScale = 1.12,
+    keyMode = "luma",
+    maxWorkPixels = EFFECT_MAX_WORK_PIXELS,
   } = options;
   const tuning = getEffectTuning();
   const area = drawWidth * drawHeight;
   let workScale = 1;
-  if (area > EFFECT_MAX_WORK_PIXELS) {
-    workScale = Math.sqrt(EFFECT_MAX_WORK_PIXELS / area);
+  if (area > maxWorkPixels) {
+    workScale = Math.sqrt(maxWorkPixels / area);
   }
 
   const workWidth = Math.max(24, Math.round(drawWidth * workScale));
@@ -875,6 +878,30 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, optio
     const r = pixels[i];
     const g = pixels[i + 1];
     const b = pixels[i + 2];
+    if (keyMode === "chromaGreen") {
+      const maxOther = Math.max(r, b);
+      const greenSignal = g - maxOther;
+      const greenGate = g > 28 && g > r * 0.8 && g > b * 0.8;
+      if (!greenGate || greenSignal <= tuning.edgeThreshold) {
+        pixels[i + 3] = 255;
+        continue;
+      }
+
+      const cut = clamp(
+        (greenSignal - tuning.edgeThreshold) / Math.max(1, tuning.edgeSoftness),
+        0,
+        1,
+      );
+      const alpha = Math.pow(1 - cut, tuning.alphaPower / 100);
+      pixels[i + 3] = Math.round(alpha * 255);
+
+      if (g > maxOther) {
+        const despill = cut * 0.92;
+        pixels[i + 1] = Math.round(g - (g - maxOther) * despill);
+      }
+      continue;
+    }
+
     const luma = Math.max(r, g, b);
     if (luma <= tuning.edgeThreshold) {
       pixels[i + 3] = 0;
@@ -935,10 +962,11 @@ function drawOverlayEffect(hand, width, height, effect, video) {
   const drawY = state.smoothY - drawHeight * effect.anchorY;
 
   drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
-    glowAlpha: effect.glowAlpha,
-    baseAlpha: 0.98,
-    blendMode: "lighter",
-    glowScale: 1.12,
+    glowAlpha: 0,
+    baseAlpha: 1,
+    blendMode: "source-over",
+    glowScale: 1,
+    keyMode: "chromaGreen",
   });
 }
 
@@ -1005,6 +1033,8 @@ function drawFullscreenVideo(video, width, height) {
     baseAlpha: 1,
     blendMode: "source-over",
     glowScale: 1,
+    keyMode: "chromaGreen",
+    maxWorkPixels: FULLSCREEN_EFFECT_MAX_WORK_PIXELS,
   });
 }
 
