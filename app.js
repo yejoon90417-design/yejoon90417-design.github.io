@@ -51,6 +51,10 @@ const EFFECT_EDGE_SOFTNESS = 36;
 const EFFECT_ALPHA_POWER = 1.4;
 const EFFECT_MAX_WORK_PIXELS = 700000;
 const FULLSCREEN_STAGE_FILL = 1.0;
+const SIZE_STORAGE_PREFIX = "naruto-effect-scale:";
+const DEFAULT_EFFECT_SCALE = 1.0;
+const MIN_EFFECT_SCALE = 0.4;
+const MAX_EFFECT_SCALE = 2.4;
 const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
   [0, 5], [5, 6], [6, 7], [7, 8],
@@ -66,6 +70,8 @@ const dom = {
   canvas: document.getElementById("cameraCanvas"),
   video: document.getElementById("cameraVideo"),
   backButton: document.getElementById("backButton"),
+  sizeSlider: document.getElementById("sizeSlider"),
+  sizeResetButton: document.getElementById("sizeResetButton"),
   errorToast: document.getElementById("errorToast"),
 };
 
@@ -96,6 +102,7 @@ const state = {
   effectVideos: {},
   effectAudios: {},
   readyAudio: null,
+  effectScales: {},
   effectAudioActive: false,
   effectAudioFinished: false,
   trackCanvas: null,
@@ -208,6 +215,65 @@ function getSelectedEffectFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const effect = params.get("effect");
   return Object.hasOwn(EFFECTS, effect) ? effect : "rasengan";
+}
+
+function getEffectScaleKey(effectKey) {
+  return `${SIZE_STORAGE_PREFIX}${effectKey}`;
+}
+
+function readSavedEffectScale(effectKey) {
+  try {
+    const saved = window.localStorage.getItem(getEffectScaleKey(effectKey));
+    const numeric = Number(saved);
+    if (!Number.isFinite(numeric)) {
+      return DEFAULT_EFFECT_SCALE;
+    }
+    return clamp(numeric, MIN_EFFECT_SCALE, MAX_EFFECT_SCALE);
+  } catch (_error) {
+    return DEFAULT_EFFECT_SCALE;
+  }
+}
+
+function getEffectScale(effectKey = state.selectedEffect) {
+  if (!effectKey) {
+    return DEFAULT_EFFECT_SCALE;
+  }
+
+  if (!Object.hasOwn(state.effectScales, effectKey)) {
+    state.effectScales[effectKey] = readSavedEffectScale(effectKey);
+  }
+  return state.effectScales[effectKey];
+}
+
+function persistEffectScale(effectKey, scale) {
+  try {
+    window.localStorage.setItem(getEffectScaleKey(effectKey), String(scale));
+  } catch (_error) {
+    // ignore storage failures
+  }
+}
+
+function updateSizeControlUi() {
+  if (!dom.sizeSlider || !dom.sizeResetButton || !state.selectedEffect) {
+    return;
+  }
+
+  const scale = getEffectScale(state.selectedEffect);
+  dom.sizeSlider.value = String(Math.round(scale * 100));
+  dom.sizeResetButton.textContent = `${Math.round(scale * 100)}%`;
+}
+
+function setEffectScale(scale, effectKey = state.selectedEffect) {
+  if (!effectKey) {
+    return;
+  }
+
+  const nextScale = clamp(scale, MIN_EFFECT_SCALE, MAX_EFFECT_SCALE);
+  state.effectScales[effectKey] = nextScale;
+  persistEffectScale(effectKey, nextScale);
+  if (effectKey === state.selectedEffect) {
+    updateSizeControlUi();
+  }
 }
 
 function setScreen(screenName) {
@@ -778,7 +844,7 @@ function drawOverlayEffect(hand, width, height, effect, video) {
     effect.maxRatio,
   );
   const viewportBase = state.runtime.mobile ? Math.max(width, height) : width;
-  const nextSize = viewportBase * targetRatio;
+  const nextSize = viewportBase * targetRatio * getEffectScale();
 
   state.smoothX = state.smoothX == null ? baseX : lerp(state.smoothX, baseX, 0.24);
   state.smoothY = state.smoothY == null ? baseY : lerp(state.smoothY, baseY, 0.22);
@@ -815,7 +881,7 @@ function updateDeidaraAnchor(holderHand, width, height) {
     effect.thumbMaxRatio,
   );
   const viewportBase = state.runtime.mobile ? Math.max(width, height) : width;
-  const nextSize = viewportBase * targetRatio;
+  const nextSize = viewportBase * targetRatio * getEffectScale("deidara");
 
   state.deidara.smoothX = state.deidara.smoothX == null ? baseX : lerp(state.deidara.smoothX, baseX, 0.28);
   state.deidara.smoothY = state.deidara.smoothY == null ? baseY : lerp(state.deidara.smoothY, baseY, 0.24);
@@ -852,7 +918,8 @@ function drawFullscreenVideo(video, width, height) {
 
   const sourceWidth = video.videoWidth || width;
   const sourceHeight = video.videoHeight || height;
-  const scale = Math.max(width / sourceWidth, height / sourceHeight) * FULLSCREEN_STAGE_FILL;
+  const scaleMultiplier = clamp(getEffectScale("deidara"), 0.7, 1.8);
+  const scale = Math.max(width / sourceWidth, height / sourceHeight) * FULLSCREEN_STAGE_FILL * scaleMultiplier;
   const drawWidth = sourceWidth * scale;
   const drawHeight = sourceHeight * scale;
   const drawX = (width - drawWidth) * 0.5;
@@ -1091,6 +1158,7 @@ async function startExperience(effectKey) {
   state.starting = true;
   showError("");
   state.selectedEffect = effectKey;
+  getEffectScale(effectKey);
   state.gateArmedUntil = 0;
   state.effectVisible = false;
   state.effectPlaybackActive = false;
@@ -1105,6 +1173,7 @@ async function startExperience(effectKey) {
   resetSmoothing();
   resetDeidaraSequence();
   state.deidara.triggerHeld = false;
+  updateSizeControlUi();
   setScreen("camera");
   resizeCanvas();
 
@@ -1167,6 +1236,18 @@ function stopExperience() {
 function bindEvents() {
   dom.backButton?.addEventListener("click", () => {
     stopExperience();
+  });
+
+  dom.sizeSlider?.addEventListener("input", (event) => {
+    const value = Number(event.currentTarget.value);
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    setEffectScale(value / 100);
+  });
+
+  dom.sizeResetButton?.addEventListener("click", () => {
+    setEffectScale(DEFAULT_EFFECT_SCALE);
   });
 
   window.addEventListener("resize", resizeCanvas);

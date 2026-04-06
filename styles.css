@@ -149,6 +149,38 @@ a {
   pointer-events: none;
 }
 
+.size-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: rgba(9, 13, 22, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+  pointer-events: auto;
+}
+
+.size-slider {
+  width: min(58vw, 300px);
+  accent-color: #ffd17b;
+}
+
+.size-reset {
+  min-width: 64px;
+  padding: 9px 12px;
+  border-radius: 999px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+}
+
 .back-button {
   padding: 12px 18px;
   border-radius: 999px;
@@ -179,5 +211,14 @@ a {
 @media (max-width: 860px) {
   #launcherScreen {
     padding: 18px;
+  }
+
+  .size-panel {
+    width: calc(100vw - 24px);
+    max-width: 420px;
+  }
+
+  .size-slider {
+    width: 100%;
   }
 }
