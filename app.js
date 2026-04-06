@@ -68,6 +68,16 @@ const DEFAULT_VIDEO_TUNING = {
   greenBias: 20,
   despill: 92,
 };
+const DEFAULT_VIDEO_TUNING_BY_ASSET = {
+  hand: {
+    edgeThreshold: 0,
+    edgeSoftness: 1,
+    alphaPower: 100,
+    greenMin: 13,
+    greenBias: 9,
+    despill: 72,
+  },
+};
 const TUNING_LIMITS = {
   scale: { min: 5, max: 240 },
   edgeThreshold: { min: 0, max: 120 },
@@ -284,26 +294,34 @@ function getVideoTuningKey(videoKey) {
   return `${VIDEO_TUNING_STORAGE_PREFIX}${videoKey}`;
 }
 
-function sanitizeVideoTuning(value) {
+function getDefaultVideoTuning(videoKey) {
   return {
-    edgeThreshold: Number.isFinite(Number(value?.edgeThreshold)) ? Number(value.edgeThreshold) : DEFAULT_VIDEO_TUNING.edgeThreshold,
-    edgeSoftness: Number.isFinite(Number(value?.edgeSoftness)) ? Number(value.edgeSoftness) : DEFAULT_VIDEO_TUNING.edgeSoftness,
-    alphaPower: Number.isFinite(Number(value?.alphaPower)) ? Number(value.alphaPower) : DEFAULT_VIDEO_TUNING.alphaPower,
-    greenMin: Number.isFinite(Number(value?.greenMin)) ? Number(value.greenMin) : DEFAULT_VIDEO_TUNING.greenMin,
-    greenBias: Number.isFinite(Number(value?.greenBias)) ? Number(value.greenBias) : DEFAULT_VIDEO_TUNING.greenBias,
-    despill: Number.isFinite(Number(value?.despill)) ? Number(value.despill) : DEFAULT_VIDEO_TUNING.despill,
+    ...DEFAULT_VIDEO_TUNING,
+    ...(DEFAULT_VIDEO_TUNING_BY_ASSET[videoKey] ?? {}),
+  };
+}
+
+function sanitizeVideoTuning(value, defaults = DEFAULT_VIDEO_TUNING) {
+  return {
+    edgeThreshold: Number.isFinite(Number(value?.edgeThreshold)) ? Number(value.edgeThreshold) : defaults.edgeThreshold,
+    edgeSoftness: Number.isFinite(Number(value?.edgeSoftness)) ? Number(value.edgeSoftness) : defaults.edgeSoftness,
+    alphaPower: Number.isFinite(Number(value?.alphaPower)) ? Number(value.alphaPower) : defaults.alphaPower,
+    greenMin: Number.isFinite(Number(value?.greenMin)) ? Number(value.greenMin) : defaults.greenMin,
+    greenBias: Number.isFinite(Number(value?.greenBias)) ? Number(value.greenBias) : defaults.greenBias,
+    despill: Number.isFinite(Number(value?.despill)) ? Number(value.despill) : defaults.despill,
   };
 }
 
 function readSavedVideoTuning(videoKey) {
+  const defaults = getDefaultVideoTuning(videoKey);
   try {
     const saved = window.localStorage.getItem(getVideoTuningKey(videoKey));
     if (!saved) {
-      return { ...DEFAULT_VIDEO_TUNING };
+      return defaults;
     }
-    return sanitizeVideoTuning(JSON.parse(saved));
+    return sanitizeVideoTuning(JSON.parse(saved), defaults);
   } catch (_error) {
-    return { ...DEFAULT_VIDEO_TUNING };
+    return defaults;
   }
 }
 

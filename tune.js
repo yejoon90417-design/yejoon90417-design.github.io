@@ -7,6 +7,16 @@ const DEFAULT_VIDEO_TUNING = {
   greenBias: 20,
   despill: 92,
 };
+const DEFAULT_VIDEO_TUNING_BY_ASSET = {
+  hand: {
+    edgeThreshold: 0,
+    edgeSoftness: 1,
+    alphaPower: 100,
+    greenMin: 13,
+    greenBias: 9,
+    despill: 72,
+  },
+};
 
 const TUNING_LIMITS = {
   edgeThreshold: { min: 0, max: 120 },
@@ -65,26 +75,34 @@ function getStorageKey(assetKey) {
   return `${VIDEO_TUNING_STORAGE_PREFIX}${assetKey}`;
 }
 
-function sanitizeTuning(value) {
+function getDefaultTuning(assetKey) {
   return {
-    edgeThreshold: clampTuningValue("edgeThreshold", Number(value?.edgeThreshold ?? DEFAULT_VIDEO_TUNING.edgeThreshold)),
-    edgeSoftness: clampTuningValue("edgeSoftness", Number(value?.edgeSoftness ?? DEFAULT_VIDEO_TUNING.edgeSoftness)),
-    alphaPower: clampTuningValue("alphaPower", Number(value?.alphaPower ?? DEFAULT_VIDEO_TUNING.alphaPower)),
-    greenMin: clampTuningValue("greenMin", Number(value?.greenMin ?? DEFAULT_VIDEO_TUNING.greenMin)),
-    greenBias: clampTuningValue("greenBias", Number(value?.greenBias ?? DEFAULT_VIDEO_TUNING.greenBias)),
-    despill: clampTuningValue("despill", Number(value?.despill ?? DEFAULT_VIDEO_TUNING.despill)),
+    ...DEFAULT_VIDEO_TUNING,
+    ...(DEFAULT_VIDEO_TUNING_BY_ASSET[assetKey] ?? {}),
+  };
+}
+
+function sanitizeTuning(value, defaults = DEFAULT_VIDEO_TUNING) {
+  return {
+    edgeThreshold: clampTuningValue("edgeThreshold", Number(value?.edgeThreshold ?? defaults.edgeThreshold)),
+    edgeSoftness: clampTuningValue("edgeSoftness", Number(value?.edgeSoftness ?? defaults.edgeSoftness)),
+    alphaPower: clampTuningValue("alphaPower", Number(value?.alphaPower ?? defaults.alphaPower)),
+    greenMin: clampTuningValue("greenMin", Number(value?.greenMin ?? defaults.greenMin)),
+    greenBias: clampTuningValue("greenBias", Number(value?.greenBias ?? defaults.greenBias)),
+    despill: clampTuningValue("despill", Number(value?.despill ?? defaults.despill)),
   };
 }
 
 function readTuning(assetKey) {
+  const defaults = getDefaultTuning(assetKey);
   try {
     const raw = window.localStorage.getItem(getStorageKey(assetKey));
     if (!raw) {
-      return { ...DEFAULT_VIDEO_TUNING };
+      return defaults;
     }
-    return sanitizeTuning(JSON.parse(raw));
+    return sanitizeTuning(JSON.parse(raw), defaults);
   } catch (_error) {
-    return { ...DEFAULT_VIDEO_TUNING };
+    return defaults;
   }
 }
 
@@ -142,7 +160,7 @@ function setTuning(key, value) {
 }
 
 function resetTuning() {
-  writeTuning(selectedAsset, { ...DEFAULT_VIDEO_TUNING });
+  writeTuning(selectedAsset, getDefaultTuning(selectedAsset));
   updateControls();
 }
 
