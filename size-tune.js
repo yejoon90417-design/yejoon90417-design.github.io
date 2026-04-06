@@ -10,9 +10,9 @@ const DEIDARA_HAND_EFFECT = {
   anchorY: 0.52,
 };
 const DEFAULT_SIZE_POINTS = [
-  { handSize: 0.12, scale: 100 },
-  { handSize: 0.2, scale: 100 },
-  { handSize: 0.3, scale: 100 },
+  { handSize: 0.3486, scale: 27 },
+  { handSize: 0.551, scale: 50 },
+  { handSize: 0.8449, scale: 70 },
 ];
 const DEFAULT_VIDEO_TUNING = {
   edgeThreshold: 30,
