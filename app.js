@@ -34,10 +34,10 @@ const EFFECTS = {
     spiderSource: "assets/거미.mp4",
     blastSource: "assets/폭발.mp4",
     handLeadSeconds: 0.42,
-    thumbMinRatio: 0.3,
-    thumbBaseRatio: 0.32,
-    thumbHandRatioScale: 1.85,
-    thumbMaxRatio: 0.88,
+    thumbMinRatio: 0.16,
+    thumbBaseRatio: 0.18,
+    thumbHandRatioScale: 1.0,
+    thumbMaxRatio: 0.5,
     anchorX: 0.5,
     anchorY: 0.52,
     glowAlpha: 0.1,
@@ -46,9 +46,10 @@ const EFFECTS = {
 
 const READY_SOUND = "assets/ready.mp3";
 const EASY_OPEN_ARM_WINDOW_MS = 2200;
-const EFFECT_EDGE_THRESHOLD = 18;
-const EFFECT_EDGE_SOFTNESS = 54;
-const EFFECT_MAX_WORK_PIXELS = 250000;
+const EFFECT_EDGE_THRESHOLD = 30;
+const EFFECT_EDGE_SOFTNESS = 36;
+const EFFECT_ALPHA_POWER = 1.4;
+const EFFECT_MAX_WORK_PIXELS = 700000;
 const FULLSCREEN_STAGE_FILL = 1.0;
 const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -709,6 +710,8 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, glowA
   const workHeight = Math.max(24, Math.round(drawHeight * workScale));
   ensureEffectCanvas(workWidth, workHeight);
 
+  state.effectCtx.imageSmoothingEnabled = true;
+  state.effectCtx.imageSmoothingQuality = "high";
   state.effectCtx.clearRect(0, 0, workWidth, workHeight);
   state.effectCtx.drawImage(video, 0, 0, workWidth, workHeight);
   const imageData = state.effectCtx.getImageData(0, 0, workWidth, workHeight);
@@ -725,12 +728,14 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, glowA
     }
 
     const alpha = clamp((luma - EFFECT_EDGE_THRESHOLD) / EFFECT_EDGE_SOFTNESS, 0, 1);
-    pixels[i + 3] = Math.round(alpha * 255);
+    pixels[i + 3] = Math.round(Math.pow(alpha, EFFECT_ALPHA_POWER) * 255);
   }
 
   state.effectCtx.putImageData(imageData, 0, 0);
 
   ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.globalCompositeOperation = "lighter";
   ctx.globalAlpha = 0.98;
   ctx.drawImage(state.effectCanvas, drawX, drawY, drawWidth, drawHeight);
