@@ -149,16 +149,16 @@ a {
   pointer-events: none;
 }
 
-.size-panel {
+.tuning-panel {
   position: absolute;
   left: 50%;
   bottom: 20px;
   transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 999px;
+  display: grid;
+  gap: 8px;
+  width: min(92vw, 460px);
+  padding: 12px;
+  border-radius: 18px;
   background: rgba(9, 13, 22, 0.66);
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--shadow);
@@ -166,13 +166,31 @@ a {
   pointer-events: auto;
 }
 
-.size-slider {
-  width: min(58vw, 300px);
+.tuning-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 10px;
+}
+
+.tuning-label,
+.tuning-value {
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+.tuning-value {
+  text-align: right;
+}
+
+.tuning-slider {
+  width: 100%;
   accent-color: #ffd17b;
 }
 
-.size-reset {
-  min-width: 64px;
+.tuning-reset {
+  justify-self: end;
+  min-width: 76px;
   padding: 9px 12px;
   border-radius: 999px;
   color: var(--text);
@@ -213,12 +231,12 @@ a {
     padding: 18px;
   }
 
-  .size-panel {
+  .tuning-panel {
     width: calc(100vw - 24px);
-    max-width: 420px;
+    max-width: 460px;
   }
 
-  .size-slider {
-    width: 100%;
+  .tuning-row {
+    grid-template-columns: 58px minmax(0, 1fr) 52px;
   }
 }

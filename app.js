@@ -46,15 +46,22 @@ const EFFECTS = {
 
 const READY_SOUND = "assets/ready.mp3";
 const EASY_OPEN_ARM_WINDOW_MS = 2200;
-const EFFECT_EDGE_THRESHOLD = 30;
-const EFFECT_EDGE_SOFTNESS = 36;
-const EFFECT_ALPHA_POWER = 1.4;
 const EFFECT_MAX_WORK_PIXELS = 700000;
-const FULLSCREEN_STAGE_FILL = 1.0;
-const SIZE_STORAGE_PREFIX = "naruto-effect-scale:";
-const DEFAULT_EFFECT_SCALE = 1.0;
-const MIN_EFFECT_SCALE = 0.4;
-const MAX_EFFECT_SCALE = 2.4;
+const TUNING_STORAGE_PREFIX = "naruto-effect-tuning:";
+const DEFAULT_EFFECT_TUNING = {
+  scale: 100,
+  edgeThreshold: 30,
+  edgeSoftness: 36,
+  alphaPower: 140,
+  fullscreenScale: 100,
+};
+const TUNING_LIMITS = {
+  scale: { min: 40, max: 240 },
+  edgeThreshold: { min: 0, max: 120 },
+  edgeSoftness: { min: 1, max: 120 },
+  alphaPower: { min: 50, max: 300 },
+  fullscreenScale: { min: 70, max: 180 },
+};
 const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
   [0, 5], [5, 6], [6, 7], [7, 8],
@@ -70,8 +77,17 @@ const dom = {
   canvas: document.getElementById("cameraCanvas"),
   video: document.getElementById("cameraVideo"),
   backButton: document.getElementById("backButton"),
-  sizeSlider: document.getElementById("sizeSlider"),
-  sizeResetButton: document.getElementById("sizeResetButton"),
+  tuningScale: document.getElementById("tuningScale"),
+  tuningScaleValue: document.getElementById("tuningScaleValue"),
+  tuningEdgeThreshold: document.getElementById("tuningEdgeThreshold"),
+  tuningEdgeThresholdValue: document.getElementById("tuningEdgeThresholdValue"),
+  tuningEdgeSoftness: document.getElementById("tuningEdgeSoftness"),
+  tuningEdgeSoftnessValue: document.getElementById("tuningEdgeSoftnessValue"),
+  tuningAlphaPower: document.getElementById("tuningAlphaPower"),
+  tuningAlphaPowerValue: document.getElementById("tuningAlphaPowerValue"),
+  tuningFullscreenScale: document.getElementById("tuningFullscreenScale"),
+  tuningFullscreenScaleValue: document.getElementById("tuningFullscreenScaleValue"),
+  tuningResetButton: document.getElementById("tuningResetButton"),
   errorToast: document.getElementById("errorToast"),
 };
 
@@ -102,7 +118,7 @@ const state = {
   effectVideos: {},
   effectAudios: {},
   readyAudio: null,
-  effectScales: {},
+  effectTunings: {},
   effectAudioActive: false,
   effectAudioFinished: false,
   trackCanvas: null,
@@ -217,62 +233,121 @@ function getSelectedEffectFromUrl() {
   return Object.hasOwn(EFFECTS, effect) ? effect : "rasengan";
 }
 
-function getEffectScaleKey(effectKey) {
-  return `${SIZE_STORAGE_PREFIX}${effectKey}`;
+function clampTuningValue(key, value) {
+  const limits = TUNING_LIMITS[key];
+  if (!limits) {
+    return value;
+  }
+  return clamp(value, limits.min, limits.max);
 }
 
-function readSavedEffectScale(effectKey) {
+function getEffectTuningKey(effectKey) {
+  return `${TUNING_STORAGE_PREFIX}${effectKey}`;
+}
+
+function sanitizeEffectTuning(value) {
+  return {
+    scale: clampTuningValue("scale", Number(value?.scale ?? DEFAULT_EFFECT_TUNING.scale)),
+    edgeThreshold: clampTuningValue("edgeThreshold", Number(value?.edgeThreshold ?? DEFAULT_EFFECT_TUNING.edgeThreshold)),
+    edgeSoftness: clampTuningValue("edgeSoftness", Number(value?.edgeSoftness ?? DEFAULT_EFFECT_TUNING.edgeSoftness)),
+    alphaPower: clampTuningValue("alphaPower", Number(value?.alphaPower ?? DEFAULT_EFFECT_TUNING.alphaPower)),
+    fullscreenScale: clampTuningValue("fullscreenScale", Number(value?.fullscreenScale ?? DEFAULT_EFFECT_TUNING.fullscreenScale)),
+  };
+}
+
+function readSavedEffectTuning(effectKey) {
   try {
-    const saved = window.localStorage.getItem(getEffectScaleKey(effectKey));
-    const numeric = Number(saved);
-    if (!Number.isFinite(numeric)) {
-      return DEFAULT_EFFECT_SCALE;
+    const saved = window.localStorage.getItem(getEffectTuningKey(effectKey));
+    if (!saved) {
+      return { ...DEFAULT_EFFECT_TUNING };
     }
-    return clamp(numeric, MIN_EFFECT_SCALE, MAX_EFFECT_SCALE);
+    return sanitizeEffectTuning(JSON.parse(saved));
   } catch (_error) {
-    return DEFAULT_EFFECT_SCALE;
+    return { ...DEFAULT_EFFECT_TUNING };
   }
 }
 
-function getEffectScale(effectKey = state.selectedEffect) {
+function getEffectTuning(effectKey = state.selectedEffect) {
   if (!effectKey) {
-    return DEFAULT_EFFECT_SCALE;
+    return { ...DEFAULT_EFFECT_TUNING };
   }
 
-  if (!Object.hasOwn(state.effectScales, effectKey)) {
-    state.effectScales[effectKey] = readSavedEffectScale(effectKey);
+  if (!Object.hasOwn(state.effectTunings, effectKey)) {
+    state.effectTunings[effectKey] = readSavedEffectTuning(effectKey);
   }
-  return state.effectScales[effectKey];
+  return state.effectTunings[effectKey];
 }
 
-function persistEffectScale(effectKey, scale) {
+function persistEffectTuning(effectKey) {
   try {
-    window.localStorage.setItem(getEffectScaleKey(effectKey), String(scale));
+    window.localStorage.setItem(
+      getEffectTuningKey(effectKey),
+      JSON.stringify(getEffectTuning(effectKey)),
+    );
   } catch (_error) {
     // ignore storage failures
   }
 }
 
-function updateSizeControlUi() {
-  if (!dom.sizeSlider || !dom.sizeResetButton || !state.selectedEffect) {
+function formatTuningValue(key, value) {
+  if (key === "alphaPower") {
+    return (value / 100).toFixed(2);
+  }
+  if (key === "scale" || key === "fullscreenScale") {
+    return `${Math.round(value)}%`;
+  }
+  return String(Math.round(value));
+}
+
+function updateTuningUi() {
+  if (!state.selectedEffect) {
     return;
   }
 
-  const scale = getEffectScale(state.selectedEffect);
-  dom.sizeSlider.value = String(Math.round(scale * 100));
-  dom.sizeResetButton.textContent = `${Math.round(scale * 100)}%`;
+  const tuning = getEffectTuning(state.selectedEffect);
+  const fields = [
+    ["scale", dom.tuningScale, dom.tuningScaleValue],
+    ["edgeThreshold", dom.tuningEdgeThreshold, dom.tuningEdgeThresholdValue],
+    ["edgeSoftness", dom.tuningEdgeSoftness, dom.tuningEdgeSoftnessValue],
+    ["alphaPower", dom.tuningAlphaPower, dom.tuningAlphaPowerValue],
+    ["fullscreenScale", dom.tuningFullscreenScale, dom.tuningFullscreenScaleValue],
+  ];
+
+  fields.forEach(([key, input, output]) => {
+    if (input) {
+      input.value = String(Math.round(tuning[key]));
+    }
+    if (output) {
+      output.textContent = formatTuningValue(key, tuning[key]);
+    }
+  });
 }
 
-function setEffectScale(scale, effectKey = state.selectedEffect) {
+function setTuningValue(key, value, effectKey = state.selectedEffect) {
   if (!effectKey) {
     return;
   }
 
-  const nextScale = clamp(scale, MIN_EFFECT_SCALE, MAX_EFFECT_SCALE);
-  state.effectScales[effectKey] = nextScale;
-  persistEffectScale(effectKey, nextScale);
+  const current = getEffectTuning(effectKey);
+  state.effectTunings[effectKey] = {
+    ...current,
+    [key]: clampTuningValue(key, Number(value)),
+  };
+  persistEffectTuning(effectKey);
   if (effectKey === state.selectedEffect) {
-    updateSizeControlUi();
+    updateTuningUi();
+  }
+}
+
+function resetEffectTuning(effectKey = state.selectedEffect) {
+  if (!effectKey) {
+    return;
+  }
+
+  state.effectTunings[effectKey] = { ...DEFAULT_EFFECT_TUNING };
+  persistEffectTuning(effectKey);
+  if (effectKey === state.selectedEffect) {
+    updateTuningUi();
   }
 }
 
@@ -778,6 +853,7 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, optio
     blendMode = "lighter",
     glowScale = 1.12,
   } = options;
+  const tuning = getEffectTuning();
   const area = drawWidth * drawHeight;
   let workScale = 1;
   if (area > EFFECT_MAX_WORK_PIXELS) {
@@ -800,13 +876,13 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, optio
     const g = pixels[i + 1];
     const b = pixels[i + 2];
     const luma = Math.max(r, g, b);
-    if (luma <= EFFECT_EDGE_THRESHOLD) {
+    if (luma <= tuning.edgeThreshold) {
       pixels[i + 3] = 0;
       continue;
     }
 
-    const alpha = clamp((luma - EFFECT_EDGE_THRESHOLD) / EFFECT_EDGE_SOFTNESS, 0, 1);
-    pixels[i + 3] = Math.round(Math.pow(alpha, EFFECT_ALPHA_POWER) * 255);
+    const alpha = clamp((luma - tuning.edgeThreshold) / Math.max(1, tuning.edgeSoftness), 0, 1);
+    pixels[i + 3] = Math.round(Math.pow(alpha, tuning.alphaPower / 100) * 255);
   }
 
   state.effectCtx.putImageData(imageData, 0, 0);
@@ -844,7 +920,7 @@ function drawOverlayEffect(hand, width, height, effect, video) {
     effect.maxRatio,
   );
   const viewportBase = state.runtime.mobile ? Math.max(width, height) : width;
-  const nextSize = viewportBase * targetRatio * getEffectScale();
+  const nextSize = viewportBase * targetRatio * (getEffectTuning().scale / 100);
 
   state.smoothX = state.smoothX == null ? baseX : lerp(state.smoothX, baseX, 0.24);
   state.smoothY = state.smoothY == null ? baseY : lerp(state.smoothY, baseY, 0.22);
@@ -881,7 +957,7 @@ function updateDeidaraAnchor(holderHand, width, height) {
     effect.thumbMaxRatio,
   );
   const viewportBase = state.runtime.mobile ? Math.max(width, height) : width;
-  const nextSize = viewportBase * targetRatio * getEffectScale("deidara");
+  const nextSize = viewportBase * targetRatio * (getEffectTuning("deidara").scale / 100);
 
   state.deidara.smoothX = state.deidara.smoothX == null ? baseX : lerp(state.deidara.smoothX, baseX, 0.28);
   state.deidara.smoothY = state.deidara.smoothY == null ? baseY : lerp(state.deidara.smoothY, baseY, 0.24);
@@ -918,7 +994,7 @@ function drawFullscreenVideo(video, width, height) {
 
   const sourceWidth = video.videoWidth || width;
   const sourceHeight = video.videoHeight || height;
-  const scaleMultiplier = clamp(getEffectScale("deidara"), 0.7, 1.8);
+  const scaleMultiplier = clamp(getEffectTuning("deidara").fullscreenScale / 100, 0.7, 1.8);
   const scale = Math.max(width / sourceWidth, height / sourceHeight) * FULLSCREEN_STAGE_FILL * scaleMultiplier;
   const drawWidth = sourceWidth * scale;
   const drawHeight = sourceHeight * scale;
@@ -1158,7 +1234,7 @@ async function startExperience(effectKey) {
   state.starting = true;
   showError("");
   state.selectedEffect = effectKey;
-  getEffectScale(effectKey);
+  getEffectTuning(effectKey);
   state.gateArmedUntil = 0;
   state.effectVisible = false;
   state.effectPlaybackActive = false;
@@ -1173,7 +1249,7 @@ async function startExperience(effectKey) {
   resetSmoothing();
   resetDeidaraSequence();
   state.deidara.triggerHeld = false;
-  updateSizeControlUi();
+  updateTuningUi();
   setScreen("camera");
   resizeCanvas();
 
@@ -1238,16 +1314,24 @@ function bindEvents() {
     stopExperience();
   });
 
-  dom.sizeSlider?.addEventListener("input", (event) => {
-    const value = Number(event.currentTarget.value);
-    if (!Number.isFinite(value)) {
-      return;
-    }
-    setEffectScale(value / 100);
+  [
+    ["scale", dom.tuningScale],
+    ["edgeThreshold", dom.tuningEdgeThreshold],
+    ["edgeSoftness", dom.tuningEdgeSoftness],
+    ["alphaPower", dom.tuningAlphaPower],
+    ["fullscreenScale", dom.tuningFullscreenScale],
+  ].forEach(([key, input]) => {
+    input?.addEventListener("input", (event) => {
+      const value = Number(event.currentTarget.value);
+      if (!Number.isFinite(value)) {
+        return;
+      }
+      setTuningValue(key, value);
+    });
   });
 
-  dom.sizeResetButton?.addEventListener("click", () => {
-    setEffectScale(DEFAULT_EFFECT_SCALE);
+  dom.tuningResetButton?.addEventListener("click", () => {
+    resetEffectTuning();
   });
 
   window.addEventListener("resize", resizeCanvas);
