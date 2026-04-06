@@ -11,7 +11,6 @@ const EFFECTS = {
     maxRatio: 1.38,
     anchorX: 0.5,
     anchorY: 0.56,
-    glow: "rgba(79, 220, 255, 0.95)",
     glowAlpha: 0.16,
   },
   chidori: {
@@ -26,30 +25,31 @@ const EFFECTS = {
     maxRatio: 1.18,
     anchorX: 0.45,
     anchorY: 0.52,
-    glow: "rgba(140, 196, 255, 0.95)",
     glowAlpha: 0.18,
   },
-  bunshin: {
-    label: "분신술",
-    mode: "bunshin",
+  deidara: {
+    label: "데이다라",
+    mode: "deidara",
+    handSource: "assets/손.mp4",
+    spiderSource: "assets/거미.mp4",
+    blastSource: "assets/폭발.mp4",
+    handLeadSeconds: 0.42,
+    thumbMinRatio: 0.3,
+    thumbBaseRatio: 0.32,
+    thumbHandRatioScale: 1.85,
+    thumbMaxRatio: 0.88,
+    anchorX: 0.5,
+    anchorY: 0.52,
+    glowAlpha: 0.1,
   },
 };
 
+const READY_SOUND = "assets/ready.mp3";
 const EASY_OPEN_ARM_WINDOW_MS = 2200;
 const EFFECT_EDGE_THRESHOLD = 18;
 const EFFECT_EDGE_SOFTNESS = 54;
 const EFFECT_MAX_WORK_PIXELS = 250000;
-const READY_SOUND = "assets/ready.mp3";
-const BUNSHIN_LAYOUT = [
-  { x: 0.14, y: 0.2, scale: 0.34, alpha: 0.92 },
-  { x: 0.5, y: 0.17, scale: 0.38, alpha: 0.88 },
-  { x: 0.86, y: 0.2, scale: 0.34, alpha: 0.92 },
-  { x: 0.16, y: 0.55, scale: 0.44, alpha: 0.84 },
-  { x: 0.5, y: 0.54, scale: 0.5, alpha: 0.78 },
-  { x: 0.84, y: 0.55, scale: 0.44, alpha: 0.84 },
-  { x: 0.3, y: 0.86, scale: 0.34, alpha: 0.72 },
-  { x: 0.7, y: 0.86, scale: 0.34, alpha: 0.72 },
-];
+const FULLSCREEN_STAGE_FILL = 1.0;
 const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
   [0, 5], [5, 6], [6, 7], [7, 8],
@@ -64,14 +64,11 @@ const dom = {
   cameraScreen: document.getElementById("cameraScreen"),
   canvas: document.getElementById("cameraCanvas"),
   video: document.getElementById("cameraVideo"),
-  effectLabel: document.getElementById("effectLabel"),
-  trackingLabel: document.getElementById("trackingLabel"),
-  fingerLabel: document.getElementById("fingerLabel"),
   backButton: document.getElementById("backButton"),
   errorToast: document.getElementById("errorToast"),
 };
 
-const ctx = dom.canvas.getContext("2d", { alpha: false });
+const ctx = dom.canvas?.getContext("2d", { alpha: false });
 
 const state = {
   selectedEffect: null,
@@ -90,6 +87,8 @@ const state = {
   runtime: null,
   cachedRightHand: null,
   cachedRightHandAt: 0,
+  cachedDeidaraRoles: null,
+  cachedDeidaraRolesAt: 0,
   smoothX: null,
   smoothY: null,
   smoothSize: null,
@@ -98,20 +97,22 @@ const state = {
   readyAudio: null,
   effectAudioActive: false,
   effectAudioFinished: false,
-  segmentation: null,
-  segmentProcessing: false,
-  lastSegmentSendAt: 0,
-  segmentCanvas: null,
-  segmentCtx: null,
-  segmentMaskCanvas: null,
-  segmentMaskCtx: null,
-  personCanvas: null,
-  personCtx: null,
-  personBounds: null,
   trackCanvas: null,
   trackCtx: null,
   effectCanvas: null,
   effectCtx: null,
+  deidaraVideos: {
+    hand: null,
+    spider: null,
+    blast: null,
+  },
+  deidara: {
+    stage: "idle",
+    triggerHeld: false,
+    smoothX: null,
+    smoothY: null,
+    smoothSize: null,
+  },
 };
 
 function clamp(value, min, max) {
@@ -120,6 +121,39 @@ function clamp(value, min, max) {
 
 function lerp(from, to, ratio) {
   return from + (to - from) * ratio;
+}
+
+function createVideoElement(src) {
+  const video = document.createElement("video");
+  video.src = src;
+  video.loop = false;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.crossOrigin = "anonymous";
+  video.addEventListener("loadeddata", () => {
+    if (video.currentTime !== 0) {
+      try {
+        video.currentTime = 0;
+      } catch (_error) {
+        // ignore
+      }
+    }
+    video.pause();
+  });
+  return video;
+}
+
+function createAudioElement(src, onEnded) {
+  const audio = document.createElement("audio");
+  audio.src = src;
+  audio.loop = false;
+  audio.preload = "auto";
+  audio.volume = 1.0;
+  if (onEnded) {
+    audio.addEventListener("ended", onEnded);
+  }
+  return audio;
 }
 
 function isLikelyMobile() {
@@ -142,10 +176,6 @@ function buildRuntimeConfig() {
     captureWidth: mobile ? 1280 : 960,
     captureHeight: mobile ? 720 : 540,
     captureFps: mobile ? 30 : 24,
-    segmentWidth: mobile ? 512 : 640,
-    segmentHeight: mobile ? 288 : 360,
-    segmentIntervalMs: mobile ? 66 : 80,
-    segmentThreshold: mobile ? 44 : 52,
     modelComplexity: mobile ? 1 : 0,
     minDetectionConfidence: mobile ? 0.34 : 0.55,
     minTrackingConfidence: mobile ? 0.28 : 0.5,
@@ -187,56 +217,45 @@ function showError(message) {
   dom.errorToast.hidden = !message;
 }
 
-function ensureCanvasBuffer(key, width, height) {
-  const canvasKey = `${key}Canvas`;
-  const ctxKey = `${key}Ctx`;
-  if (!state[canvasKey]) {
-    state[canvasKey] = document.createElement("canvas");
-    state[ctxKey] = state[canvasKey].getContext("2d", { willReadFrequently: true });
-  }
-
-  if (state[canvasKey].width !== width || state[canvasKey].height !== height) {
-    state[canvasKey].width = width;
-    state[canvasKey].height = height;
-  }
-
-  return state[canvasKey];
-}
-
 function buildEffectVideos() {
   Object.entries(EFFECTS).forEach(([key, effect]) => {
-    if (effect.source) {
-      const video = document.createElement("video");
-      video.src = effect.source;
-      video.loop = false;
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = "auto";
-      state.effectVideos[key] = video;
+    if (effect.mode === "overlay" && effect.source) {
+      state.effectVideos[key] = createVideoElement(effect.source);
     }
 
-    if (effect.sound) {
-      const audio = document.createElement("audio");
-      audio.src = effect.sound;
-      audio.loop = false;
-      audio.preload = "auto";
-      audio.volume = 1.0;
-      audio.addEventListener("ended", () => {
+    if (effect.mode === "overlay" && effect.sound) {
+      state.effectAudios[key] = createAudioElement(effect.sound, () => {
         if (state.selectedEffect === key) {
           state.effectAudioActive = false;
           state.effectAudioFinished = true;
           state.effectVisible = false;
         }
       });
-      state.effectAudios[key] = audio;
     }
   });
 
-  const readyAudio = document.createElement("audio");
-  readyAudio.src = READY_SOUND;
-  readyAudio.preload = "auto";
-  readyAudio.volume = 1.0;
-  state.readyAudio = readyAudio;
+  const deidara = EFFECTS.deidara;
+  state.deidaraVideos.hand = createVideoElement(deidara.handSource);
+  state.deidaraVideos.spider = createVideoElement(deidara.spiderSource);
+  state.deidaraVideos.blast = createVideoElement(deidara.blastSource);
+
+  state.deidaraVideos.hand.addEventListener("ended", () => {
+    if (state.selectedEffect === "deidara" && state.deidara.stage === "hand") {
+      startDeidaraStage("spider");
+    }
+  });
+  state.deidaraVideos.spider.addEventListener("ended", () => {
+    if (state.selectedEffect === "deidara" && state.deidara.stage === "spider") {
+      startDeidaraStage("blast");
+    }
+  });
+  state.deidaraVideos.blast.addEventListener("ended", () => {
+    if (state.selectedEffect === "deidara" && state.deidara.stage === "blast") {
+      resetDeidaraSequence();
+    }
+  });
+
+  state.readyAudio = createAudioElement(READY_SOUND);
 }
 
 async function ensureHands() {
@@ -251,7 +270,7 @@ async function ensureHands() {
   });
 
   hands.setOptions({
-    maxNumHands: 1,
+    maxNumHands: 2,
     modelComplexity: state.runtime.modelComplexity,
     minDetectionConfidence: state.runtime.minDetectionConfidence,
     minTrackingConfidence: state.runtime.minTrackingConfidence,
@@ -263,29 +282,6 @@ async function ensureHands() {
 
   state.hands = hands;
   return hands;
-}
-
-async function ensureSegmentation() {
-  if (state.segmentation || !window.SelfieSegmentation) {
-    return state.segmentation;
-  }
-
-  const segmentation = new window.SelfieSegmentation({
-    locateFile(file) {
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
-    },
-  });
-
-  segmentation.setOptions({
-    modelSelection: 1,
-  });
-
-  segmentation.onResults((results) => {
-    updateBunshinCutout(results);
-  });
-
-  state.segmentation = segmentation;
-  return segmentation;
 }
 
 function resizeCanvas() {
@@ -342,6 +338,7 @@ function getPalmCenter(landmarks) {
     },
     { x: 0, y: 0 },
   );
+
   return {
     x: total.x / ids.length,
     y: total.y / ids.length,
@@ -383,14 +380,6 @@ function isTwoSign(landmarks) {
   }
 
   const guideReach = Math.max(dist(landmarks[8], wrist), dist(landmarks[12], wrist));
-  const thumbFold = dist(landmarks[4], wrist) < guideReach * tuning.thumbFoldRatio;
-  return thumbFold;
-}
-
-function isThumbFoldedForTwoSign(landmarks) {
-  const tuning = getGestureTuning();
-  const wrist = landmarks[0];
-  const guideReach = Math.max(dist(landmarks[8], wrist), dist(landmarks[12], wrist));
   return dist(landmarks[4], wrist) < guideReach * tuning.thumbFoldRatio;
 }
 
@@ -417,7 +406,7 @@ function isOpenPalm(landmarks) {
   return tipSpan >= tuning.openTipSpan;
 }
 
-function classifyRightHandGesture(hand) {
+function classifyHandGesture(hand) {
   if (!hand) {
     return null;
   }
@@ -430,55 +419,90 @@ function classifyRightHandGesture(hand) {
   return "other";
 }
 
-function getFingerDebugText(hand) {
-  if (!hand) {
-    return "IDX:- MID:- RNG:- PNK:- THB:-";
+function getDetectedHands(results) {
+  if (!results?.multiHandLandmarks?.length) {
+    return [];
   }
 
-  const landmarks = hand.landmarks;
-  const indexUp = isFingerExtended(landmarks, 8, 6, 5);
-  const middleUp = isFingerExtended(landmarks, 12, 10, 9);
-  const ringUp = isFingerExtended(landmarks, 16, 14, 13);
-  const pinkyUp = isFingerExtended(landmarks, 20, 18, 17);
-  const thumbFold = isThumbFoldedForTwoSign(landmarks);
-  return [
-    `IDX:${indexUp ? "UP" : "DN"}`,
-    `MID:${middleUp ? "UP" : "DN"}`,
-    `RNG:${ringUp ? "UP" : "DN"}`,
-    `PNK:${pinkyUp ? "UP" : "DN"}`,
-    `THB:${thumbFold ? "FD" : "OP"}`,
-  ].join("  ");
+  return results.multiHandLandmarks
+    .map((handLandmarks, index) => {
+      const landmarks = getMirroredLandmarks(handLandmarks);
+      const bounds = getBounds(landmarks);
+      const palm = getPalmCenter(landmarks);
+      const fingertip = {
+        x: (landmarks[8].x + landmarks[12].x) * 0.5,
+        y: (landmarks[8].y + landmarks[12].y) * 0.5,
+      };
+      const rawLabel = results.multiHandedness?.[index]?.label ?? "";
+      const actualLabel = rawLabel === "Left" ? "Right" : rawLabel === "Right" ? "Left" : "";
+
+      return {
+        landmarks,
+        bounds,
+        palm,
+        fingertip,
+        label: actualLabel,
+        area: bounds.width * bounds.height,
+      };
+    })
+    .sort((a, b) => a.palm.x - b.palm.x);
 }
 
-function drawHandDebug(hand, width, height) {
-  if (!hand) {
-    return;
+function pickRightHand(hands) {
+  if (!hands.length) {
+    return null;
   }
 
-  const points = hand.landmarks.map((landmark) => ({
-    x: landmark.x * width,
-    y: landmark.y * height,
-  }));
-
-  ctx.save();
-  ctx.lineWidth = 2.2;
-  ctx.strokeStyle = "rgba(112, 214, 255, 0.9)";
-  ctx.fillStyle = "rgba(248, 252, 255, 0.95)";
-  for (const [from, to] of HAND_CONNECTIONS) {
-    const a = points[from];
-    const b = points[to];
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+  const labeled = hands
+    .filter((hand) => hand.label === "Right")
+    .sort((a, b) => b.area - a.area);
+  if (labeled.length) {
+    return labeled[0];
   }
 
-  for (const point of points) {
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, 3.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
+  return hands[hands.length - 1];
+}
+
+function pickDeidaraRoles(hands) {
+  const holder = hands[0] ?? null;
+  const trigger = hands.length > 1 ? hands[hands.length - 1] : null;
+  return {
+    holder,
+    trigger,
+    hasTwoHands: hands.length >= 2,
+  };
+}
+
+function drawHandsDebug(hands, width, height) {
+  hands.forEach((hand, index) => {
+    const points = hand.landmarks.map((landmark) => ({
+      x: landmark.x * width,
+      y: landmark.y * height,
+    }));
+
+    ctx.save();
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = index === 0
+      ? "rgba(255, 213, 140, 0.9)"
+      : "rgba(112, 214, 255, 0.9)";
+    ctx.fillStyle = "rgba(248, 252, 255, 0.95)";
+
+    for (const [from, to] of HAND_CONNECTIONS) {
+      const a = points[from];
+      const b = points[to];
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+
+    for (const point of points) {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  });
 }
 
 function playReadyAudio() {
@@ -494,100 +518,69 @@ function playReadyAudio() {
   }
 }
 
-function updateGestureState(hand) {
-  const now = performance.now();
-  if (state.gateArmedUntil > 0 && now > state.gateArmedUntil) {
-    state.gateArmedUntil = 0;
+function stopReadyAudio() {
+  if (!state.readyAudio) {
+    return;
   }
-
-  const effect = EFFECTS[state.selectedEffect];
-  const gesture = classifyRightHandGesture(hand);
-  if (gesture === "two" && state.lastGesture !== "two") {
-    playReadyAudio();
+  try {
+    state.readyAudio.pause();
+    state.readyAudio.currentTime = 0;
+  } catch (_error) {
+    // ignore playback errors
   }
-  state.lastGesture = gesture;
-
-  if (effect?.mode === "bunshin") {
-    if (gesture === "two") {
-      state.effectAudioFinished = false;
-      state.effectVisible = true;
-      return "분신술 발동중";
-    }
-
-    state.effectVisible = false;
-    return hand ? "검지+중지 대기중" : "오른손 대기중";
-  }
-
-  if (gesture === "two") {
-    state.gateArmedUntil = now + EASY_OPEN_ARM_WINDOW_MS;
-    state.effectAudioFinished = false;
-    state.effectVisible = false;
-    return "검지+중지 인식";
-  }
-
-  if (gesture === "open") {
-    if ((state.gateArmedUntil > now || state.effectVisible) && !state.effectAudioFinished) {
-      state.effectVisible = true;
-      return "손 펼침 발동중";
-    }
-    state.effectVisible = false;
-    return "검지+중지 후 손펼침";
-  }
-
-  state.effectVisible = false;
-  if (state.gateArmedUntil > now) {
-    return "손 펼침 대기중";
-  }
-  return hand ? "검지+중지 대기중" : "오른손 대기중";
-}
-
-function getRightHand(results) {
-  if (!results || !results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-    return null;
-  }
-
-  const candidates = results.multiHandLandmarks.map((handLandmarks, index) => {
-    const landmarks = getMirroredLandmarks(handLandmarks);
-    const bounds = getBounds(landmarks);
-    const palm = getPalmCenter(landmarks);
-    const fingertip = {
-      x: (landmarks[8].x + landmarks[12].x) * 0.5,
-      y: (landmarks[8].y + landmarks[12].y) * 0.5,
-    };
-    const rawLabel = results.multiHandedness?.[index]?.label ?? "";
-    const actualLabel = rawLabel === "Left" ? "Right" : rawLabel === "Right" ? "Left" : "";
-
-    return {
-      landmarks,
-      bounds,
-      palm,
-      fingertip,
-      label: actualLabel,
-      score: palm.x * 4 + bounds.width * bounds.height,
-    };
-  });
-
-  if (candidates.length === 1) {
-    return candidates[0];
-  }
-
-  const rightLabelCandidates = candidates
-    .filter((candidate) => candidate.label === "Right")
-    .sort((a, b) => b.score - a.score);
-  if (rightLabelCandidates.length > 0) {
-    return rightLabelCandidates[0];
-  }
-
-  const screenRightCandidates = candidates
-    .filter((candidate) => candidate.palm.x >= 0.5)
-    .sort((a, b) => b.score - a.score);
-  return screenRightCandidates[0] ?? null;
 }
 
 function resetSmoothing() {
   state.smoothX = null;
   state.smoothY = null;
   state.smoothSize = null;
+}
+
+function resetDeidaraAnchor() {
+  state.deidara.smoothX = null;
+  state.deidara.smoothY = null;
+  state.deidara.smoothSize = null;
+}
+
+function resetDeidaraSequence() {
+  state.deidara.stage = "idle";
+  pauseAllDeidaraVideos();
+  resetDeidaraAnchor();
+}
+
+function pauseAllDeidaraVideos() {
+  Object.values(state.deidaraVideos).forEach((video) => {
+    if (!video) {
+      return;
+    }
+    video.pause();
+    try {
+      video.currentTime = 0;
+    } catch (_error) {
+      // ignore seek errors
+    }
+  });
+}
+
+function startDeidaraStage(stage) {
+  pauseAllDeidaraVideos();
+  state.deidara.stage = stage;
+
+  if (stage === "idle") {
+    return;
+  }
+
+  const video = state.deidaraVideos[stage];
+  if (!video) {
+    return;
+  }
+
+  try {
+    video.currentTime = 0;
+  } catch (_error) {
+    // ignore seek errors until metadata is ready
+  }
+  video.play().catch(() => {});
 }
 
 function syncEffectAudio(isVisible) {
@@ -610,18 +603,6 @@ function syncEffectAudio(isVisible) {
     state.effectAudioActive = false;
     audio.pause();
     audio.currentTime = 0;
-  }
-}
-
-function stopReadyAudio() {
-  if (!state.readyAudio) {
-    return;
-  }
-  try {
-    state.readyAudio.pause();
-    state.readyAudio.currentTime = 0;
-  } catch (_error) {
-    // ignore playback errors
   }
 }
 
@@ -671,6 +652,37 @@ function syncEffectPlayback(isVisible) {
   }
 }
 
+function updateOverlayGestureState(hand) {
+  const now = performance.now();
+  if (state.gateArmedUntil > 0 && now > state.gateArmedUntil) {
+    state.gateArmedUntil = 0;
+  }
+
+  const gesture = classifyHandGesture(hand);
+  if (gesture === "two" && state.lastGesture !== "two") {
+    playReadyAudio();
+  }
+  state.lastGesture = gesture;
+
+  if (gesture === "two") {
+    state.gateArmedUntil = now + EASY_OPEN_ARM_WINDOW_MS;
+    state.effectAudioFinished = false;
+    state.effectVisible = false;
+    return;
+  }
+
+  if (gesture === "open") {
+    if ((state.gateArmedUntil > now || state.effectVisible) && !state.effectAudioFinished) {
+      state.effectVisible = true;
+      return;
+    }
+    state.effectVisible = false;
+    return;
+  }
+
+  state.effectVisible = false;
+}
+
 function drawBackground(width, height) {
   ctx.save();
   ctx.translate(width, 0);
@@ -679,121 +691,14 @@ function drawBackground(width, height) {
   ctx.restore();
 }
 
-function updateBunshinCutout(results) {
-  const source = results?.image;
-  const mask = results?.segmentationMask;
-  if (!source || !mask) {
-    state.personBounds = null;
-    return;
-  }
-
-  const width = source.videoWidth || source.width || state.runtime.segmentWidth;
-  const height = source.videoHeight || source.height || state.runtime.segmentHeight;
-  ensureCanvasBuffer("segmentMask", width, height);
-  ensureCanvasBuffer("person", width, height);
-
-  const maskCtx = state.segmentMaskCtx;
-  const personCtx = state.personCtx;
-  const threshold = state.runtime.segmentThreshold;
-
-  maskCtx.save();
-  maskCtx.clearRect(0, 0, width, height);
-  maskCtx.translate(width, 0);
-  maskCtx.scale(-1, 1);
-  maskCtx.drawImage(mask, 0, 0, width, height);
-  maskCtx.restore();
-
-  const maskData = maskCtx.getImageData(0, 0, width, height).data;
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const index = (y * width + x) * 4;
-      const value = Math.max(maskData[index], maskData[index + 1], maskData[index + 2]);
-      if (value < threshold) {
-        continue;
-      }
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-  }
-
-  if (maxX <= minX || maxY <= minY) {
-    state.personBounds = null;
-    personCtx.clearRect(0, 0, width, height);
-    return;
-  }
-
-  personCtx.save();
-  personCtx.clearRect(0, 0, width, height);
-  personCtx.translate(width, 0);
-  personCtx.scale(-1, 1);
-  personCtx.drawImage(mask, 0, 0, width, height);
-  personCtx.globalCompositeOperation = "source-in";
-  personCtx.drawImage(source, 0, 0, width, height);
-  personCtx.restore();
-  personCtx.globalCompositeOperation = "source-over";
-
-  const padX = Math.round((maxX - minX) * 0.1);
-  const padY = Math.round((maxY - minY) * 0.08);
-  state.personBounds = {
-    x: Math.max(0, minX - padX),
-    y: Math.max(0, minY - padY),
-    width: Math.min(width, maxX - minX + padX * 2),
-    height: Math.min(height, maxY - minY + padY * 2),
-  };
-}
-
-function drawBunshinOverlay(width, height) {
-  if (!state.personCanvas || !state.personBounds) {
-    return;
-  }
-
-  const pulse = 1 + Math.sin(performance.now() / 180) * 0.02;
-  const sourceBounds = state.personBounds;
-  const frameAspect = sourceBounds.height / sourceBounds.width;
-
-  BUNSHIN_LAYOUT.forEach((clone, index) => {
-    const cloneHeight = height * clone.scale * pulse;
-    const cloneWidth = cloneHeight / frameAspect;
-    const drawX = clone.x * width - cloneWidth * 0.5;
-    const drawY = clone.y * height - cloneHeight * 0.5;
-
-    ctx.save();
-    ctx.globalAlpha = clone.alpha;
-    ctx.shadowColor = "rgba(180, 215, 255, 0.22)";
-    ctx.shadowBlur = 16 + index * 2;
-    ctx.drawImage(
-      state.personCanvas,
-      sourceBounds.x,
-      sourceBounds.y,
-      sourceBounds.width,
-      sourceBounds.height,
-      drawX,
-      drawY,
-      cloneWidth,
-      cloneHeight,
-    );
-    ctx.restore();
-  });
-}
-
 function ensureEffectCanvas(workWidth, workHeight) {
-  if (
-    state.effectCanvas.width !== workWidth
-    || state.effectCanvas.height !== workHeight
-  ) {
+  if (state.effectCanvas.width !== workWidth || state.effectCanvas.height !== workHeight) {
     state.effectCanvas.width = workWidth;
     state.effectCanvas.height = workHeight;
   }
 }
 
-function drawMaskedEffectFrame(effectVideo, drawX, drawY, drawWidth, drawHeight, effect) {
+function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, glowAlpha) {
   const area = drawWidth * drawHeight;
   let workScale = 1;
   if (area > EFFECT_MAX_WORK_PIXELS) {
@@ -805,7 +710,7 @@ function drawMaskedEffectFrame(effectVideo, drawX, drawY, drawWidth, drawHeight,
   ensureEffectCanvas(workWidth, workHeight);
 
   state.effectCtx.clearRect(0, 0, workWidth, workHeight);
-  state.effectCtx.drawImage(effectVideo, 0, 0, workWidth, workHeight);
+  state.effectCtx.drawImage(video, 0, 0, workWidth, workHeight);
   const imageData = state.effectCtx.getImageData(0, 0, workWidth, workHeight);
   const pixels = imageData.data;
 
@@ -829,7 +734,7 @@ function drawMaskedEffectFrame(effectVideo, drawX, drawY, drawWidth, drawHeight,
   ctx.globalCompositeOperation = "lighter";
   ctx.globalAlpha = 0.98;
   ctx.drawImage(state.effectCanvas, drawX, drawY, drawWidth, drawHeight);
-  ctx.globalAlpha = effect.glowAlpha;
+  ctx.globalAlpha = glowAlpha;
   ctx.drawImage(
     state.effectCanvas,
     drawX - drawWidth * 0.06,
@@ -840,10 +745,8 @@ function drawMaskedEffectFrame(effectVideo, drawX, drawY, drawWidth, drawHeight,
   ctx.restore();
 }
 
-function drawEffectOverlay(hand, width, height) {
-  const effect = EFFECTS[state.selectedEffect];
-  const effectVideo = state.effectVideos[state.selectedEffect];
-  if (!effect || !effectVideo || effectVideo.readyState < 2) {
+function drawOverlayEffect(hand, width, height, effect, video) {
+  if (!video || video.readyState < 2) {
     return;
   }
 
@@ -862,15 +765,188 @@ function drawEffectOverlay(hand, width, height) {
   state.smoothY = state.smoothY == null ? baseY : lerp(state.smoothY, baseY, 0.22);
   state.smoothSize = state.smoothSize == null ? nextSize : lerp(state.smoothSize, nextSize, 0.2);
 
-  const effectAspect = effectVideo.videoWidth > 0 && effectVideo.videoHeight > 0
-    ? effectVideo.videoWidth / effectVideo.videoHeight
+  const aspect = video.videoWidth > 0 && video.videoHeight > 0
+    ? video.videoWidth / video.videoHeight
     : 1;
-
   const drawWidth = state.smoothSize;
-  const drawHeight = drawWidth / effectAspect;
+  const drawHeight = drawWidth / aspect;
   const drawX = state.smoothX - drawWidth * effect.anchorX;
   const drawY = state.smoothY - drawHeight * effect.anchorY;
-  drawMaskedEffectFrame(effectVideo, drawX, drawY, drawWidth, drawHeight, effect);
+
+  drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, effect.glowAlpha);
+}
+
+function updateDeidaraAnchor(holderHand, width, height) {
+  if (!holderHand) {
+    return;
+  }
+
+  const effect = EFFECTS.deidara;
+  const baseX = holderHand.palm.x * width;
+  const baseY = holderHand.palm.y * height;
+  const handRatio = Math.max(holderHand.bounds.width, holderHand.bounds.height);
+  const targetRatio = clamp(
+    effect.thumbBaseRatio + handRatio * effect.thumbHandRatioScale,
+    effect.thumbMinRatio,
+    effect.thumbMaxRatio,
+  );
+  const viewportBase = state.runtime.mobile ? Math.max(width, height) : width;
+  const nextSize = viewportBase * targetRatio;
+
+  state.deidara.smoothX = state.deidara.smoothX == null ? baseX : lerp(state.deidara.smoothX, baseX, 0.28);
+  state.deidara.smoothY = state.deidara.smoothY == null ? baseY : lerp(state.deidara.smoothY, baseY, 0.24);
+  state.deidara.smoothSize = state.deidara.smoothSize == null
+    ? nextSize
+    : lerp(state.deidara.smoothSize, nextSize, 0.2);
+}
+
+function drawDeidaraHandVideo(video) {
+  if (!video || video.readyState < 2 || state.deidara.smoothSize == null) {
+    return;
+  }
+
+  const effect = EFFECTS.deidara;
+  const aspect = video.videoWidth > 0 && video.videoHeight > 0
+    ? video.videoWidth / video.videoHeight
+    : 1;
+  const drawWidth = state.deidara.smoothSize;
+  const drawHeight = drawWidth / aspect;
+  const drawX = state.deidara.smoothX - drawWidth * effect.anchorX;
+  const drawY = state.deidara.smoothY - drawHeight * effect.anchorY;
+  drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, effect.glowAlpha);
+}
+
+function drawFullscreenVideo(video, width, height) {
+  if (!video || video.readyState < 2) {
+    return;
+  }
+
+  const sourceWidth = video.videoWidth || width;
+  const sourceHeight = video.videoHeight || height;
+  const scale = Math.max(width / sourceWidth, height / sourceHeight) * FULLSCREEN_STAGE_FILL;
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  const drawX = (width - drawWidth) * 0.5;
+  const drawY = (height - drawHeight) * 0.5;
+  ctx.drawImage(video, drawX, drawY, drawWidth, drawHeight);
+}
+
+function keepVideoPlaying(video) {
+  if (video && video.paused) {
+    video.play().catch(() => {});
+  }
+}
+
+function advanceDeidaraSequence() {
+  const effect = EFFECTS.deidara;
+
+  if (state.deidara.stage === "hand") {
+    const video = state.deidaraVideos.hand;
+    keepVideoPlaying(video);
+    const duration = Number.isFinite(video?.duration) ? video.duration : 0;
+    if (duration > 0.1 && video.currentTime >= Math.max(0, duration - effect.handLeadSeconds)) {
+      startDeidaraStage("spider");
+    }
+    return;
+  }
+
+  if (state.deidara.stage === "spider") {
+    const video = state.deidaraVideos.spider;
+    keepVideoPlaying(video);
+    const duration = Number.isFinite(video?.duration) ? video.duration : 0;
+    if (duration > 0.1 && video.currentTime >= duration - 0.05) {
+      startDeidaraStage("blast");
+    }
+    return;
+  }
+
+  if (state.deidara.stage === "blast") {
+    const video = state.deidaraVideos.blast;
+    keepVideoPlaying(video);
+    const duration = Number.isFinite(video?.duration) ? video.duration : 0;
+    if (duration > 0.1 && video.currentTime >= duration - 0.05) {
+      resetDeidaraSequence();
+    }
+  }
+}
+
+function drawOverlayScene(hands, width, height, now) {
+  let rightHand = pickRightHand(hands);
+  if (rightHand) {
+    state.cachedRightHand = rightHand;
+    state.cachedRightHandAt = now;
+  } else if (state.cachedRightHand && now - state.cachedRightHandAt <= state.runtime.handLostGraceMs) {
+    rightHand = state.cachedRightHand;
+  } else {
+    state.cachedRightHand = null;
+  }
+
+  updateOverlayGestureState(rightHand);
+  drawHandsDebug(hands, width, height);
+
+  if (rightHand && state.effectVisible) {
+    syncEffectPlayback(true);
+    syncEffectAudio(true);
+    drawOverlayEffect(
+      rightHand,
+      width,
+      height,
+      EFFECTS[state.selectedEffect],
+      state.effectVideos[state.selectedEffect],
+    );
+  } else {
+    resetSmoothing();
+    syncEffectPlayback(false);
+    syncEffectAudio(false);
+  }
+}
+
+function drawDeidaraScene(hands, width, height, now) {
+  let roles = pickDeidaraRoles(hands);
+  if (roles.holder || roles.trigger) {
+    state.cachedDeidaraRoles = roles;
+    state.cachedDeidaraRolesAt = now;
+  } else if (state.cachedDeidaraRoles && now - state.cachedDeidaraRolesAt <= state.runtime.handLostGraceMs) {
+    roles = state.cachedDeidaraRoles;
+  } else {
+    state.cachedDeidaraRoles = null;
+  }
+
+  updateDeidaraAnchor(roles.holder, width, height);
+
+  const triggerIsTwo = classifyHandGesture(roles.trigger) === "two";
+  if (
+    state.deidara.stage === "idle"
+    && roles.hasTwoHands
+    && roles.holder
+    && roles.trigger
+    && triggerIsTwo
+    && !state.deidara.triggerHeld
+  ) {
+    playReadyAudio();
+    startDeidaraStage("hand");
+  }
+  state.deidara.triggerHeld = Boolean(triggerIsTwo);
+
+  advanceDeidaraSequence();
+
+  if (state.deidara.stage === "spider") {
+    drawFullscreenVideo(state.deidaraVideos.spider, width, height);
+    return;
+  }
+
+  if (state.deidara.stage === "blast") {
+    drawFullscreenVideo(state.deidaraVideos.blast, width, height);
+    return;
+  }
+
+  drawHandsDebug(hands, width, height);
+  const handVideo = state.deidaraVideos.hand;
+  if (roles.holder || state.deidara.stage === "hand") {
+    drawDeidaraHandVideo(handVideo);
+  } else {
+    resetDeidaraAnchor();
+  }
 }
 
 function drawFrame() {
@@ -881,40 +957,24 @@ function drawFrame() {
   const width = window.innerWidth;
   const height = window.innerHeight;
   const now = performance.now();
+  const hands = getDetectedHands(state.latestResults);
+
   ctx.clearRect(0, 0, width, height);
   drawBackground(width, height);
 
-  let rightHand = getRightHand(state.latestResults);
-  if (rightHand) {
-    state.cachedRightHand = rightHand;
-    state.cachedRightHandAt = now;
-  } else if (state.cachedRightHand && now - state.cachedRightHandAt <= state.runtime.handLostGraceMs) {
-    rightHand = state.cachedRightHand;
-  } else {
-    state.cachedRightHand = null;
+  const effect = EFFECTS[state.selectedEffect];
+  if (!effect) {
+    return;
   }
 
-  const trackingText = updateGestureState(rightHand);
-  if (dom.trackingLabel) {
-    dom.trackingLabel.textContent = trackingText;
-  }
-  if (dom.fingerLabel) {
-    dom.fingerLabel.textContent = getFingerDebugText(rightHand);
-  }
-  drawHandDebug(rightHand, width, height);
-  if (rightHand && state.effectVisible) {
-    syncEffectPlayback(true);
-    if (EFFECTS[state.selectedEffect]?.mode === "bunshin") {
-      drawBunshinOverlay(width, height);
-    } else {
-      drawEffectOverlay(rightHand, width, height);
-    }
-    syncEffectAudio(true);
-  } else {
-    resetSmoothing();
+  if (effect.mode === "deidara") {
     syncEffectPlayback(false);
     syncEffectAudio(false);
+    drawDeidaraScene(hands, width, height, now);
+    return;
   }
+
+  drawOverlayScene(hands, width, height, now);
 }
 
 function renderLoop() {
@@ -945,43 +1005,7 @@ function renderLoop() {
       });
   }
 
-  if (
-    EFFECTS[state.selectedEffect]?.mode === "bunshin"
-    && state.segmentation
-    && dom.video.readyState >= 2
-    && !state.segmentProcessing
-    && now - state.lastSegmentSendAt >= state.runtime.segmentIntervalMs
-  ) {
-    state.segmentProcessing = true;
-    state.lastSegmentSendAt = now;
-    state.segmentCtx.drawImage(dom.video, 0, 0, state.runtime.segmentWidth, state.runtime.segmentHeight);
-    state.segmentation
-      .send({ image: state.segmentCanvas })
-      .catch((error) => {
-        console.error(error);
-      })
-      .finally(() => {
-        state.segmentProcessing = false;
-      });
-  }
-
   state.rafId = window.requestAnimationFrame(renderLoop);
-}
-
-async function playSelectedEffect(resetTime = false) {
-  Object.entries(state.effectVideos).forEach(([key, video]) => {
-    if (key !== state.selectedEffect) {
-      video.pause();
-      return;
-    }
-    if (resetTime) {
-      try {
-        video.currentTime = 0;
-      } catch (_error) {
-        // ignore seek failures until metadata is ready
-      }
-    }
-  });
 }
 
 async function startCamera() {
@@ -1003,6 +1027,28 @@ async function startCamera() {
   await dom.video.play();
 }
 
+async function warmSelectedMedia() {
+  const effect = EFFECTS[state.selectedEffect];
+  if (!effect) {
+    return;
+  }
+
+  if (effect.mode === "overlay") {
+    const video = state.effectVideos[state.selectedEffect];
+    if (video) {
+      video.pause();
+      try {
+        video.currentTime = 0;
+      } catch (_error) {
+        // ignore seek errors
+      }
+    }
+    return;
+  }
+
+  pauseAllDeidaraVideos();
+}
+
 async function startExperience(effectKey) {
   if (state.starting) {
     return;
@@ -1011,12 +1057,6 @@ async function startExperience(effectKey) {
   state.starting = true;
   showError("");
   state.selectedEffect = effectKey;
-  if (dom.effectLabel) {
-    dom.effectLabel.textContent = EFFECTS[effectKey].label;
-  }
-  if (dom.trackingLabel) {
-    dom.trackingLabel.textContent = "검지+중지 대기중";
-  }
   state.gateArmedUntil = 0;
   state.effectVisible = false;
   state.effectPlaybackActive = false;
@@ -1025,18 +1065,19 @@ async function startExperience(effectKey) {
   state.lastGesture = null;
   state.cachedRightHand = null;
   state.cachedRightHandAt = 0;
+  state.cachedDeidaraRoles = null;
+  state.cachedDeidaraRolesAt = 0;
   stopReadyAudio();
   resetSmoothing();
+  resetDeidaraSequence();
+  state.deidara.triggerHeld = false;
   setScreen("camera");
   resizeCanvas();
 
   try {
     await ensureHands();
-    if (EFFECTS[effectKey]?.mode === "bunshin") {
-      await ensureSegmentation();
-    }
     await startCamera();
-    await playSelectedEffect(true);
+    await warmSelectedMedia();
     state.running = true;
     resizeCanvas();
     window.cancelAnimationFrame(state.rafId);
@@ -1044,7 +1085,7 @@ async function startExperience(effectKey) {
   } catch (error) {
     console.error(error);
     state.running = false;
-    showError("카메라를 열지 못했습니다. 브라우저에서 카메라 권한을 허용해 주세요.");
+    showError("카메라를 열지 못했습니다.");
   } finally {
     state.starting = false;
   }
@@ -1065,20 +1106,26 @@ function stopExperience() {
   window.cancelAnimationFrame(state.rafId);
   state.rafId = 0;
   state.latestResults = null;
+  state.processing = false;
+  state.lastHandSendAt = 0;
   state.gateArmedUntil = 0;
   state.effectVisible = false;
   state.effectPlaybackActive = false;
+  state.effectAudioActive = false;
+  state.effectAudioFinished = false;
   state.lastGesture = null;
   state.cachedRightHand = null;
   state.cachedRightHandAt = 0;
-  state.segmentProcessing = false;
-  state.lastSegmentSendAt = 0;
-  state.personBounds = null;
+  state.cachedDeidaraRoles = null;
+  state.cachedDeidaraRolesAt = 0;
   stopReadyAudio();
   resetSmoothing();
+  resetDeidaraSequence();
+  state.deidara.triggerHeld = false;
   syncEffectPlayback(false);
   syncEffectAudio(false);
   Object.values(state.effectVideos).forEach((video) => video.pause());
+  pauseAllDeidaraVideos();
   stopCamera();
   window.location.href = "./";
 }
@@ -1093,11 +1140,12 @@ function bindEvents() {
 }
 
 function boot() {
-  if (!dom.cameraScreen || !dom.canvas || !dom.video) {
+  if (!dom.cameraScreen || !dom.canvas || !dom.video || !ctx) {
     return;
   }
 
   state.runtime = buildRuntimeConfig();
+
   const trackCanvas = document.createElement("canvas");
   trackCanvas.width = state.runtime.trackWidth;
   trackCanvas.height = state.runtime.trackHeight;
@@ -1106,16 +1154,10 @@ function boot() {
   trackCtx.imageSmoothingQuality = "low";
   state.trackCanvas = trackCanvas;
   state.trackCtx = trackCtx;
-  const segmentCanvas = document.createElement("canvas");
-  segmentCanvas.width = state.runtime.segmentWidth;
-  segmentCanvas.height = state.runtime.segmentHeight;
-  const segmentCtx = segmentCanvas.getContext("2d", { alpha: false });
-  segmentCtx.imageSmoothingEnabled = true;
-  segmentCtx.imageSmoothingQuality = "low";
-  state.segmentCanvas = segmentCanvas;
-  state.segmentCtx = segmentCtx;
+
   state.effectCanvas = document.createElement("canvas");
   state.effectCtx = state.effectCanvas.getContext("2d", { willReadFrequently: true });
+
   buildEffectVideos();
   bindEvents();
   resizeCanvas();

@@ -5,11 +5,6 @@
   --panel: rgba(9, 13, 22, 0.78);
   --panel-border: rgba(255, 255, 255, 0.08);
   --text: #f2f6ff;
-  --muted: #b6c0d5;
-  --rasengan-a: #5ce7ff;
-  --rasengan-b: #1a8fff;
-  --chidori-a: #8fd8ff;
-  --chidori-b: #3f6fff;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
 }
 
@@ -61,7 +56,7 @@ a {
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 18px;
   width: min(860px, 100%);
 }
@@ -106,23 +101,16 @@ a {
     linear-gradient(135deg, rgba(143, 216, 255, 0.14), rgba(63, 111, 255, 0.04));
 }
 
-.effect-card.bunshin::before {
+.effect-card.deidara::before {
   background:
-    radial-gradient(circle at 18% 16%, rgba(255, 255, 255, 0.18), transparent 34%),
-    linear-gradient(135deg, rgba(201, 229, 255, 0.14), rgba(196, 208, 255, 0.04));
+    radial-gradient(circle at 18% 16%, rgba(255, 196, 112, 0.26), transparent 38%),
+    linear-gradient(135deg, rgba(255, 185, 118, 0.16), rgba(255, 103, 48, 0.04));
 }
 
 .effect-card > * {
   position: relative;
   z-index: 1;
   display: block;
-}
-
-.effect-kicker {
-  color: #9fb7e2;
-  font-size: 0.8rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
 }
 
 .effect-card strong {
@@ -136,7 +124,13 @@ a {
 }
 
 #cameraVideo {
-  display: none;
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0.001;
+  pointer-events: none;
 }
 
 #cameraCanvas {
@@ -151,41 +145,18 @@ a {
   left: 18px;
   right: 18px;
   display: flex;
-  align-items: center;
-  gap: 12px;
+  justify-content: flex-end;
   pointer-events: none;
 }
 
-.status-chip,
-.back-button,
-.error-toast {
-  backdrop-filter: blur(18px);
-  background: rgba(9, 13, 22, 0.66);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: var(--shadow);
-}
-
-.status-chip {
-  min-width: 180px;
-  padding: 12px 14px;
-  border-radius: 16px;
-}
-
-.status-chip-wide {
-  min-width: 340px;
-}
-
-.status-chip strong {
-  display: block;
-  font-size: 1rem;
-  line-height: 1.35;
-}
-
 .back-button {
-  margin-left: auto;
   padding: 12px 18px;
   border-radius: 999px;
   color: var(--text);
+  background: rgba(9, 13, 22, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
   pointer-events: auto;
   cursor: pointer;
 }
@@ -199,22 +170,14 @@ a {
   padding: 14px 16px;
   border-radius: 16px;
   color: #ffd8d4;
+  background: rgba(9, 13, 22, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
 }
 
 @media (max-width: 860px) {
   #launcherScreen {
     padding: 18px;
-  }
-
-  .card-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .hud {
-    flex-wrap: wrap;
-  }
-
-  .back-button {
-    margin-left: 0;
   }
 }
