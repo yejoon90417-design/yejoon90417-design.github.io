@@ -171,8 +171,7 @@ const state = {
   effectAudioFinished: false,
   trackCanvas: null,
   trackCtx: null,
-  effectCanvas: null,
-  effectCtx: null,
+  maskedFrameCaches: new WeakMap(),
   deidaraVideos: {
     hand: null,
     spider: null,
@@ -252,16 +251,16 @@ function buildRuntimeConfig() {
   return {
     mobile,
     dprCap: mobile ? 1.0 : 1.1,
-    trackWidth: mobile ? 960 : 640,
-    trackHeight: mobile ? 540 : 360,
-    trackIntervalMs: mobile ? 34 : 75,
+    trackWidth: mobile ? 768 : 640,
+    trackHeight: mobile ? 432 : 360,
+    trackIntervalMs: mobile ? 42 : 75,
     captureWidth: mobile ? 1280 : 960,
     captureHeight: mobile ? 720 : 540,
     captureFps: mobile ? 30 : 24,
-    modelComplexity: mobile ? 1 : 0,
+    modelComplexity: 0,
     minDetectionConfidence: mobile ? 0.34 : 0.55,
     minTrackingConfidence: mobile ? 0.28 : 0.5,
-    handLostGraceMs: mobile ? 320 : 140,
+    handLostGraceMs: mobile ? 380 : 140,
   };
 }
 
@@ -983,11 +982,48 @@ function drawBackground(width, height) {
   ctx.restore();
 }
 
-function ensureEffectCanvas(workWidth, workHeight) {
-  if (state.effectCanvas.width !== workWidth || state.effectCanvas.height !== workHeight) {
-    state.effectCanvas.width = workWidth;
-    state.effectCanvas.height = workHeight;
+function getMaskedFrameCache(video) {
+  let cache = state.maskedFrameCaches.get(video);
+  if (cache) {
+    return cache;
   }
+
+  const canvas = document.createElement("canvas");
+  const cacheCtx = canvas.getContext("2d", { willReadFrequently: true });
+  cache = {
+    canvas,
+    ctx: cacheCtx,
+    frameToken: -1,
+    workWidth: 0,
+    workHeight: 0,
+    keyMode: "",
+    tuningSignature: "",
+  };
+  state.maskedFrameCaches.set(video, cache);
+  return cache;
+}
+
+function getTuningSignature(tuning, keyMode) {
+  return [
+    keyMode,
+    Math.round(tuning.edgeThreshold),
+    Math.round(tuning.edgeSoftness),
+    Math.round(tuning.alphaPower),
+    Math.round(tuning.greenMin ?? 0),
+    Math.round(tuning.greenBias ?? 0),
+    Math.round(tuning.despill ?? 0),
+  ].join("|");
+}
+
+function getVideoFrameToken(video) {
+  return Math.round((video.currentTime || 0) * 30);
+}
+
+function getWorkPixelBudget(maxWorkPixels) {
+  if (!state.runtime?.mobile) {
+    return maxWorkPixels;
+  }
+  return Math.round(maxWorkPixels * 0.72);
 }
 
 function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, options = {}) {
@@ -1002,72 +1038,94 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, optio
   } = options;
   const tuning = tuningOverride ?? getEffectTuning();
   const area = drawWidth * drawHeight;
+  const pixelBudget = getWorkPixelBudget(maxWorkPixels);
   let workScale = 1;
-  if (area > maxWorkPixels) {
-    workScale = Math.sqrt(maxWorkPixels / area);
+  if (area > pixelBudget) {
+    workScale = Math.sqrt(pixelBudget / area);
   }
 
-  const workWidth = Math.max(24, Math.round(drawWidth * workScale));
-  const workHeight = Math.max(24, Math.round(drawHeight * workScale));
-  ensureEffectCanvas(workWidth, workHeight);
+  const workWidth = Math.max(24, Math.round((drawWidth * workScale) / 4) * 4);
+  const workHeight = Math.max(24, Math.round((drawHeight * workScale) / 4) * 4);
+  const cache = getMaskedFrameCache(video);
+  const frameToken = getVideoFrameToken(video);
+  const tuningSignature = getTuningSignature(tuning, keyMode);
+  const cacheValid = (
+    cache.frameToken === frameToken
+    && cache.workWidth === workWidth
+    && cache.workHeight === workHeight
+    && cache.keyMode === keyMode
+    && cache.tuningSignature === tuningSignature
+  );
 
-  state.effectCtx.imageSmoothingEnabled = true;
-  state.effectCtx.imageSmoothingQuality = "high";
-  state.effectCtx.clearRect(0, 0, workWidth, workHeight);
-  state.effectCtx.drawImage(video, 0, 0, workWidth, workHeight);
-  const imageData = state.effectCtx.getImageData(0, 0, workWidth, workHeight);
-  const pixels = imageData.data;
+  if (!cacheValid) {
+    if (cache.canvas.width !== workWidth || cache.canvas.height !== workHeight) {
+      cache.canvas.width = workWidth;
+      cache.canvas.height = workHeight;
+    }
 
-  for (let i = 0; i < pixels.length; i += 4) {
-    const r = pixels[i];
-    const g = pixels[i + 1];
-    const b = pixels[i + 2];
-    if (keyMode === "chromaGreen") {
-      const maxOther = Math.max(r, b);
-      const greenSignal = g - maxOther;
-      const greenGate = g > tuning.greenMin && g > r + tuning.greenBias && g > b + tuning.greenBias;
-      if (!greenGate || greenSignal <= tuning.edgeThreshold) {
-        pixels[i + 3] = 255;
+    cache.ctx.imageSmoothingEnabled = true;
+    cache.ctx.imageSmoothingQuality = "medium";
+    cache.ctx.clearRect(0, 0, workWidth, workHeight);
+    cache.ctx.drawImage(video, 0, 0, workWidth, workHeight);
+    const imageData = cache.ctx.getImageData(0, 0, workWidth, workHeight);
+    const pixels = imageData.data;
+
+    for (let i = 0; i < pixels.length; i += 4) {
+      const r = pixels[i];
+      const g = pixels[i + 1];
+      const b = pixels[i + 2];
+      if (keyMode === "chromaGreen") {
+        const maxOther = Math.max(r, b);
+        const greenSignal = g - maxOther;
+        const greenGate = g > tuning.greenMin && g > r + tuning.greenBias && g > b + tuning.greenBias;
+        if (!greenGate || greenSignal <= tuning.edgeThreshold) {
+          pixels[i + 3] = 255;
+          continue;
+        }
+
+        const cut = clamp(
+          (greenSignal - tuning.edgeThreshold) / Math.max(1, tuning.edgeSoftness),
+          0,
+          1,
+        );
+        const alpha = Math.pow(1 - cut, tuning.alphaPower / 100);
+        pixels[i + 3] = Math.round(alpha * 255);
+
+        if (g > maxOther) {
+          const despill = cut * (tuning.despill / 100);
+          pixels[i + 1] = Math.round(g - (g - maxOther) * despill);
+        }
         continue;
       }
 
-      const cut = clamp(
-        (greenSignal - tuning.edgeThreshold) / Math.max(1, tuning.edgeSoftness),
-        0,
-        1,
-      );
-      const alpha = Math.pow(1 - cut, tuning.alphaPower / 100);
-      pixels[i + 3] = Math.round(alpha * 255);
-
-      if (g > maxOther) {
-        const despill = cut * (tuning.despill / 100);
-        pixels[i + 1] = Math.round(g - (g - maxOther) * despill);
+      const luma = Math.max(r, g, b);
+      if (luma <= LUMA_EDGE_THRESHOLD) {
+        pixels[i + 3] = 0;
+        continue;
       }
-      continue;
+
+      const alpha = clamp((luma - LUMA_EDGE_THRESHOLD) / LUMA_EDGE_SOFTNESS, 0, 1);
+      pixels[i + 3] = Math.round(Math.pow(alpha, LUMA_ALPHA_POWER) * 255);
     }
 
-    const luma = Math.max(r, g, b);
-    if (luma <= LUMA_EDGE_THRESHOLD) {
-      pixels[i + 3] = 0;
-      continue;
-    }
-
-    const alpha = clamp((luma - LUMA_EDGE_THRESHOLD) / LUMA_EDGE_SOFTNESS, 0, 1);
-    pixels[i + 3] = Math.round(Math.pow(alpha, LUMA_ALPHA_POWER) * 255);
+    cache.ctx.putImageData(imageData, 0, 0);
+    cache.frameToken = frameToken;
+    cache.workWidth = workWidth;
+    cache.workHeight = workHeight;
+    cache.keyMode = keyMode;
+    cache.tuningSignature = tuningSignature;
   }
-
-  state.effectCtx.putImageData(imageData, 0, 0);
 
   ctx.save();
   ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
+  ctx.imageSmoothingQuality = "medium";
   ctx.globalCompositeOperation = blendMode;
   ctx.globalAlpha = baseAlpha;
-  ctx.drawImage(state.effectCanvas, drawX, drawY, drawWidth, drawHeight);
+  ctx.drawImage(cache.canvas, drawX, drawY, drawWidth, drawHeight);
   if (glowAlpha > 0) {
     ctx.globalAlpha = glowAlpha;
     ctx.drawImage(
-      state.effectCanvas,
+      cache.canvas,
       drawX - drawWidth * 0.06,
       drawY - drawHeight * 0.06,
       drawWidth * glowScale,
@@ -1253,6 +1311,18 @@ function keepVideoPlaying(video) {
   }
 }
 
+function shouldTrackHands() {
+  if (!state.selectedEffect) {
+    return true;
+  }
+
+  if (state.selectedEffect === "deidara" && state.deidara.stage === "spider") {
+    return false;
+  }
+
+  return true;
+}
+
 function advanceDeidaraSequence() {
   const effect = EFFECTS.deidara;
 
@@ -1345,7 +1415,6 @@ function drawDeidaraScene(hands, width, height, now) {
   advanceDeidaraSequence();
 
   if (state.deidara.stage === "spider") {
-    drawHandsDebug(hands, width, height);
     const transitionProgress = getDeidaraSpiderProgress(now);
     const handAlpha = clamp(1 - transitionProgress / 0.78, 0, 1);
     if (handAlpha > 0.02) {
@@ -1404,6 +1473,7 @@ function renderLoop() {
     state.hands
     && dom.video.readyState >= 2
     && !state.processing
+    && shouldTrackHands()
     && now - state.lastHandSendAt >= state.runtime.trackIntervalMs
   ) {
     state.processing = true;
@@ -1483,6 +1553,7 @@ async function startExperience(effectKey) {
   state.cachedRightHandAt = 0;
   state.cachedDeidaraRoles = null;
   state.cachedDeidaraRolesAt = 0;
+  state.maskedFrameCaches = new WeakMap();
   stopReadyAudio();
   resetSmoothing();
   resetDeidaraSequence();
@@ -1535,6 +1606,7 @@ function stopExperience() {
   state.cachedRightHandAt = 0;
   state.cachedDeidaraRoles = null;
   state.cachedDeidaraRolesAt = 0;
+  state.maskedFrameCaches = new WeakMap();
   stopReadyAudio();
   resetSmoothing();
   resetDeidaraSequence();
@@ -1591,9 +1663,6 @@ function boot() {
   trackCtx.imageSmoothingQuality = "low";
   state.trackCanvas = trackCanvas;
   state.trackCtx = trackCtx;
-
-  state.effectCanvas = document.createElement("canvas");
-  state.effectCtx = state.effectCanvas.getContext("2d", { willReadFrequently: true });
 
   buildEffectVideos();
   bindEvents();
