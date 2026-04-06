@@ -1,7 +1,7 @@
 const SIZE_CALIBRATION_STORAGE_KEY = "naruto-size-calibration:deidara";
 const VIDEO_TUNING_STORAGE_PREFIX = "naruto-video-tuning:";
 const DEIDARA_HAND_EFFECT = {
-  source: "assets/손.mp4?v=20260406-2333",
+  source: "assets/손.mp4?v=20260406-2359",
   thumbMinRatio: 0.16,
   thumbBaseRatio: 0.18,
   thumbHandRatioScale: 1.0,

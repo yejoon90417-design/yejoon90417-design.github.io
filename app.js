@@ -30,8 +30,8 @@ const EFFECTS = {
   deidara: {
     label: "데이다라",
     mode: "deidara",
-    handSource: "assets/손.mp4?v=20260406-2333",
-    spiderSource: "assets/거미.mp4",
+    handSource: "assets/손.mp4?v=20260406-2359",
+    spiderSource: "assets/거미.mp4?v=20260406-2359",
     blastSource: "assets/폭발.mp4",
     handLeadSeconds: 0.42,
     thumbMinRatio: 0.16,
@@ -505,7 +505,7 @@ function buildEffectVideos() {
   const deidara = EFFECTS.deidara;
   state.deidaraVideos.hand = createVideoElement(deidara.handSource, { muted: false, volume: 1.0 });
   state.deidaraVideos.spider = createVideoElement(deidara.spiderSource, { muted: false, volume: 1.0 });
-  state.deidaraVideos.blast = createVideoElement(deidara.blastSource, { muted: false, volume: 1.0 });
+  state.deidaraVideos.blast = null;
 
   state.deidaraVideos.hand.addEventListener("ended", () => {
     if (state.selectedEffect === "deidara" && state.deidara.stage === "hand") {
@@ -514,11 +514,6 @@ function buildEffectVideos() {
   });
   state.deidaraVideos.spider.addEventListener("ended", () => {
     if (state.selectedEffect === "deidara" && state.deidara.stage === "spider") {
-      startDeidaraStage("blast");
-    }
-  });
-  state.deidaraVideos.blast.addEventListener("ended", () => {
-    if (state.selectedEffect === "deidara" && state.deidara.stage === "blast") {
       resetDeidaraSequence();
     }
   });
@@ -1187,18 +1182,9 @@ function advanceDeidaraSequence() {
     keepVideoPlaying(video);
     const duration = Number.isFinite(video?.duration) ? video.duration : 0;
     if (duration > 0.1 && video.currentTime >= duration - 0.05) {
-      startDeidaraStage("blast");
-    }
-    return;
-  }
-
-  if (state.deidara.stage === "blast") {
-    const video = state.deidaraVideos.blast;
-    keepVideoPlaying(video);
-    const duration = Number.isFinite(video?.duration) ? video.duration : 0;
-    if (duration > 0.1 && video.currentTime >= duration - 0.05) {
       resetDeidaraSequence();
     }
+    return;
   }
 }
 
@@ -1264,11 +1250,6 @@ function drawDeidaraScene(hands, width, height, now) {
 
   if (state.deidara.stage === "spider") {
     drawFullscreenVideo(state.deidaraVideos.spider, width, height, "spider");
-    return;
-  }
-
-  if (state.deidara.stage === "blast") {
-    drawFullscreenVideo(state.deidaraVideos.blast, width, height, "blast");
     return;
   }
 
