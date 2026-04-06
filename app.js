@@ -31,7 +31,7 @@ const EFFECTS = {
     label: "데이다라",
     mode: "deidara",
     handSource: "assets/손.mp4?v=20260406-2359",
-    spiderSource: "assets/거미.mp4?v=20260406-2359",
+    spiderSource: "assets/거미.mp4?v=20260407-0000",
     blastSource: "assets/폭발.mp4",
     handLeadSeconds: 0.55,
     spiderTransitionMs: 420,

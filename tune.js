@@ -37,7 +37,7 @@ const TUNING_LIMITS = {
 
 const ASSETS = {
   hand: { label: "손", src: "assets/손.mp4?v=20260406-2359" },
-  spider: { label: "거미", src: "assets/거미.mp4?v=20260406-2359" },
+  spider: { label: "거미", src: "assets/거미.mp4?v=20260407-0000" },
   blast: { label: "폭발", src: "assets/폭발.mp4" },
 };
 
