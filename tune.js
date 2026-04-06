@@ -24,6 +24,14 @@ const DEFAULT_VIDEO_TUNING_BY_ASSET = {
     greenBias: 5,
     despill: 84,
   },
+  blast: {
+    edgeThreshold: 30,
+    edgeSoftness: 59,
+    alphaPower: 295,
+    greenMin: 0,
+    greenBias: 5,
+    despill: 84,
+  },
 };
 
 const TUNING_LIMITS = {
@@ -38,7 +46,7 @@ const TUNING_LIMITS = {
 const ASSETS = {
   hand: { label: "손", src: "assets/손.mp4?v=20260406-2359" },
   spider: { label: "거미", src: "assets/거미.mp4?v=20260407-0000" },
-  blast: { label: "폭발", src: "assets/폭발.mp4" },
+  blast: { label: "폭발", src: "assets/폭발.mp4?v=20260407-0014" },
 };
 
 const dom = {

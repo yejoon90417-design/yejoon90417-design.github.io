@@ -32,10 +32,12 @@ const EFFECTS = {
     mode: "deidara",
     handSource: "assets/손.mp4?v=20260406-2359",
     spiderSource: "assets/거미.mp4?v=20260407-0000",
-    blastSource: "assets/폭발.mp4",
+    blastSource: "assets/폭발.mp4?v=20260407-0014",
     handLeadSeconds: 0.55,
     spiderTransitionMs: 420,
     spiderOriginScale: 0.76,
+    blastLeadSeconds: 0.36,
+    blastTransitionMs: 280,
     thumbMinRatio: 0.16,
     thumbBaseRatio: 0.18,
     thumbHandRatioScale: 1.0,
@@ -81,6 +83,14 @@ const DEFAULT_VIDEO_TUNING_BY_ASSET = {
     despill: 72,
   },
   spider: {
+    edgeThreshold: 30,
+    edgeSoftness: 59,
+    alphaPower: 295,
+    greenMin: 0,
+    greenBias: 5,
+    despill: 84,
+  },
+  blast: {
     edgeThreshold: 30,
     edgeSoftness: 59,
     alphaPower: 295,
@@ -180,6 +190,7 @@ const state = {
     spiderOriginX: null,
     spiderOriginY: null,
     spiderOriginSize: null,
+    blastStartedAt: 0,
   },
 };
 
@@ -511,7 +522,7 @@ function buildEffectVideos() {
   const deidara = EFFECTS.deidara;
   state.deidaraVideos.hand = createVideoElement(deidara.handSource, { muted: false, volume: 1.0 });
   state.deidaraVideos.spider = createVideoElement(deidara.spiderSource, { muted: false, volume: 1.0 });
-  state.deidaraVideos.blast = null;
+  state.deidaraVideos.blast = createVideoElement(deidara.blastSource, { muted: false, volume: 1.0 });
 
   state.deidaraVideos.hand.addEventListener("ended", () => {
     if (state.selectedEffect === "deidara" && state.deidara.stage === "hand") {
@@ -520,6 +531,11 @@ function buildEffectVideos() {
   });
   state.deidaraVideos.spider.addEventListener("ended", () => {
     if (state.selectedEffect === "deidara" && state.deidara.stage === "spider") {
+      startDeidaraStage("blast");
+    }
+  });
+  state.deidaraVideos.blast.addEventListener("ended", () => {
+    if (state.selectedEffect === "deidara" && state.deidara.stage === "blast") {
       resetDeidaraSequence();
     }
   });
@@ -813,6 +829,7 @@ function resetDeidaraAnchor() {
   state.deidara.spiderOriginX = null;
   state.deidara.spiderOriginY = null;
   state.deidara.spiderOriginSize = null;
+  state.deidara.blastStartedAt = 0;
 }
 
 function resetDeidaraSequence() {
@@ -850,6 +867,8 @@ function startDeidaraStage(stage) {
     state.deidara.spiderOriginX = state.deidara.smoothX;
     state.deidara.spiderOriginY = state.deidara.smoothY;
     state.deidara.spiderOriginSize = state.deidara.smoothSize;
+  } else if (stage === "blast") {
+    state.deidara.blastStartedAt = performance.now();
   } else {
     pauseAllDeidaraVideos();
   }
@@ -1171,12 +1190,16 @@ function getFullscreenVideoRect(video, width, height, scaleMultiplier) {
   };
 }
 
-function drawFullscreenVideo(video, width, height, videoKey) {
+function drawFullscreenVideo(video, width, height, videoKey, options = {}) {
   if (!video || video.readyState < 2) {
     return;
   }
 
-  const tuning = readSavedVideoTuning(videoKey);
+  const {
+    baseAlpha = 1,
+    tuningKey = videoKey,
+  } = options;
+  const tuning = readSavedVideoTuning(tuningKey);
   const scaleMultiplier = clamp(getEffectTuning("deidara").fullscreenScale / 100, 0.7, 1.8);
   const { drawX, drawY, drawWidth, drawHeight } = getFullscreenVideoRect(
     video,
@@ -1186,7 +1209,7 @@ function drawFullscreenVideo(video, width, height, videoKey) {
   );
   drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
     glowAlpha: 0,
-    baseAlpha: 1,
+    baseAlpha,
     blendMode: "source-over",
     glowScale: 1,
     keyMode: "chromaGreen",
@@ -1198,6 +1221,12 @@ function drawFullscreenVideo(video, width, height, videoKey) {
 function getDeidaraSpiderProgress(now) {
   const duration = Math.max(1, EFFECTS.deidara.spiderTransitionMs);
   const raw = clamp((now - state.deidara.spiderStartedAt) / duration, 0, 1);
+  return 1 - Math.pow(1 - raw, 3);
+}
+
+function getDeidaraBlastProgress(now) {
+  const duration = Math.max(1, EFFECTS.deidara.blastTransitionMs);
+  const raw = clamp((now - state.deidara.blastStartedAt) / duration, 0, 1);
   return 1 - Math.pow(1 - raw, 3);
 }
 
@@ -1263,7 +1292,22 @@ function advanceDeidaraSequence() {
     const video = state.deidaraVideos.spider;
     keepVideoPlaying(video);
     const duration = Number.isFinite(video?.duration) ? video.duration : 0;
-    if (duration > 0.1 && video.currentTime >= duration - 0.05) {
+    if (duration > 0.1 && video.currentTime >= Math.max(0, duration - effect.blastLeadSeconds)) {
+      startDeidaraStage("blast");
+    }
+    return;
+  }
+
+  if (state.deidara.stage === "blast") {
+    const spiderVideo = state.deidaraVideos.spider;
+    const spiderDuration = Number.isFinite(spiderVideo?.duration) ? spiderVideo.duration : 0;
+    if (spiderVideo && (spiderDuration <= 0 || spiderVideo.currentTime < spiderDuration - 0.03)) {
+      keepVideoPlaying(spiderVideo);
+    }
+    const blastVideo = state.deidaraVideos.blast;
+    keepVideoPlaying(blastVideo);
+    const blastDuration = Number.isFinite(blastVideo?.duration) ? blastVideo.duration : 0;
+    if (blastDuration > 0.1 && blastVideo.currentTime >= blastDuration - 0.05) {
       resetDeidaraSequence();
     }
     return;
@@ -1312,7 +1356,7 @@ function drawDeidaraScene(hands, width, height, now) {
     state.cachedDeidaraRoles = null;
   }
 
-  if (state.deidara.stage !== "spider") {
+  if (state.deidara.stage !== "spider" && state.deidara.stage !== "blast") {
     updateDeidaraAnchor(roles.holder, width, height);
   }
 
@@ -1340,6 +1384,22 @@ function drawDeidaraScene(hands, width, height, now) {
       drawDeidaraHandVideo(state.deidaraVideos.hand, "hand", { baseAlpha: handAlpha });
     }
     drawDeidaraSpiderVideo(state.deidaraVideos.spider, width, height, now);
+    return;
+  }
+
+  if (state.deidara.stage === "blast") {
+    drawHandsDebug(hands, width, height);
+    const transitionProgress = getDeidaraBlastProgress(now);
+    const spiderAlpha = clamp(1 - transitionProgress / 0.82, 0, 1);
+    if (spiderAlpha > 0.02) {
+      drawFullscreenVideo(state.deidaraVideos.spider, width, height, "spider", {
+        baseAlpha: spiderAlpha,
+      });
+    }
+    drawFullscreenVideo(state.deidaraVideos.blast, width, height, "blast", {
+      baseAlpha: clamp(transitionProgress * 1.08, 0, 1),
+      tuningKey: "spider",
+    });
     return;
   }
 
