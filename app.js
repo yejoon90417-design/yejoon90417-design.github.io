@@ -699,7 +699,13 @@ function ensureEffectCanvas(workWidth, workHeight) {
   }
 }
 
-function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, glowAlpha) {
+function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, options = {}) {
+  const {
+    glowAlpha = 0,
+    baseAlpha = 0.98,
+    blendMode = "lighter",
+    glowScale = 1.12,
+  } = options;
   const area = drawWidth * drawHeight;
   let workScale = 1;
   if (area > EFFECT_MAX_WORK_PIXELS) {
@@ -736,17 +742,19 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, glowA
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
-  ctx.globalCompositeOperation = "lighter";
-  ctx.globalAlpha = 0.98;
+  ctx.globalCompositeOperation = blendMode;
+  ctx.globalAlpha = baseAlpha;
   ctx.drawImage(state.effectCanvas, drawX, drawY, drawWidth, drawHeight);
-  ctx.globalAlpha = glowAlpha;
-  ctx.drawImage(
-    state.effectCanvas,
-    drawX - drawWidth * 0.06,
-    drawY - drawHeight * 0.06,
-    drawWidth * 1.12,
-    drawHeight * 1.12,
-  );
+  if (glowAlpha > 0) {
+    ctx.globalAlpha = glowAlpha;
+    ctx.drawImage(
+      state.effectCanvas,
+      drawX - drawWidth * 0.06,
+      drawY - drawHeight * 0.06,
+      drawWidth * glowScale,
+      drawHeight * glowScale,
+    );
+  }
   ctx.restore();
 }
 
@@ -778,7 +786,12 @@ function drawOverlayEffect(hand, width, height, effect, video) {
   const drawX = state.smoothX - drawWidth * effect.anchorX;
   const drawY = state.smoothY - drawHeight * effect.anchorY;
 
-  drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, effect.glowAlpha);
+  drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
+    glowAlpha: effect.glowAlpha,
+    baseAlpha: 0.98,
+    blendMode: "lighter",
+    glowScale: 1.12,
+  });
 }
 
 function updateDeidaraAnchor(holderHand, width, height) {
@@ -818,7 +831,12 @@ function drawDeidaraHandVideo(video) {
   const drawHeight = drawWidth / aspect;
   const drawX = state.deidara.smoothX - drawWidth * effect.anchorX;
   const drawY = state.deidara.smoothY - drawHeight * effect.anchorY;
-  drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, effect.glowAlpha);
+  drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
+    glowAlpha: effect.glowAlpha,
+    baseAlpha: 0.98,
+    blendMode: "lighter",
+    glowScale: 1.12,
+  });
 }
 
 function drawFullscreenVideo(video, width, height) {
@@ -833,7 +851,12 @@ function drawFullscreenVideo(video, width, height) {
   const drawHeight = sourceHeight * scale;
   const drawX = (width - drawWidth) * 0.5;
   const drawY = (height - drawHeight) * 0.5;
-  ctx.drawImage(video, drawX, drawY, drawWidth, drawHeight);
+  drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
+    glowAlpha: 0,
+    baseAlpha: 1,
+    blendMode: "source-over",
+    glowScale: 1,
+  });
 }
 
 function keepVideoPlaying(video) {
