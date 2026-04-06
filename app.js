@@ -49,12 +49,21 @@ const EASY_OPEN_ARM_WINDOW_MS = 2200;
 const EFFECT_MAX_WORK_PIXELS = 700000;
 const FULLSCREEN_EFFECT_MAX_WORK_PIXELS = 1600000;
 const TUNING_STORAGE_PREFIX = "naruto-effect-tuning:";
+const VIDEO_TUNING_STORAGE_PREFIX = "naruto-video-tuning:";
 const DEFAULT_EFFECT_TUNING = {
   scale: 100,
   edgeThreshold: 30,
   edgeSoftness: 36,
   alphaPower: 140,
   fullscreenScale: 100,
+};
+const DEFAULT_VIDEO_TUNING = {
+  edgeThreshold: 30,
+  edgeSoftness: 36,
+  alphaPower: 140,
+  greenMin: 28,
+  greenBias: 20,
+  despill: 92,
 };
 const TUNING_LIMITS = {
   scale: { min: 5, max: 240 },
@@ -265,6 +274,33 @@ function readSavedEffectTuning(effectKey) {
     return sanitizeEffectTuning(JSON.parse(saved));
   } catch (_error) {
     return { ...DEFAULT_EFFECT_TUNING };
+  }
+}
+
+function getVideoTuningKey(videoKey) {
+  return `${VIDEO_TUNING_STORAGE_PREFIX}${videoKey}`;
+}
+
+function sanitizeVideoTuning(value) {
+  return {
+    edgeThreshold: Number.isFinite(Number(value?.edgeThreshold)) ? Number(value.edgeThreshold) : DEFAULT_VIDEO_TUNING.edgeThreshold,
+    edgeSoftness: Number.isFinite(Number(value?.edgeSoftness)) ? Number(value.edgeSoftness) : DEFAULT_VIDEO_TUNING.edgeSoftness,
+    alphaPower: Number.isFinite(Number(value?.alphaPower)) ? Number(value.alphaPower) : DEFAULT_VIDEO_TUNING.alphaPower,
+    greenMin: Number.isFinite(Number(value?.greenMin)) ? Number(value.greenMin) : DEFAULT_VIDEO_TUNING.greenMin,
+    greenBias: Number.isFinite(Number(value?.greenBias)) ? Number(value.greenBias) : DEFAULT_VIDEO_TUNING.greenBias,
+    despill: Number.isFinite(Number(value?.despill)) ? Number(value.despill) : DEFAULT_VIDEO_TUNING.despill,
+  };
+}
+
+function readSavedVideoTuning(videoKey) {
+  try {
+    const saved = window.localStorage.getItem(getVideoTuningKey(videoKey));
+    if (!saved) {
+      return { ...DEFAULT_VIDEO_TUNING };
+    }
+    return sanitizeVideoTuning(JSON.parse(saved));
+  } catch (_error) {
+    return { ...DEFAULT_VIDEO_TUNING };
   }
 }
 
@@ -855,8 +891,9 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, optio
     glowScale = 1.12,
     keyMode = "luma",
     maxWorkPixels = EFFECT_MAX_WORK_PIXELS,
+    tuningOverride = null,
   } = options;
-  const tuning = getEffectTuning();
+  const tuning = tuningOverride ?? getEffectTuning();
   const area = drawWidth * drawHeight;
   let workScale = 1;
   if (area > maxWorkPixels) {
@@ -881,7 +918,7 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, optio
     if (keyMode === "chromaGreen") {
       const maxOther = Math.max(r, b);
       const greenSignal = g - maxOther;
-      const greenGate = g > 28 && g > r * 0.8 && g > b * 0.8;
+      const greenGate = g > tuning.greenMin && g > r + tuning.greenBias && g > b + tuning.greenBias;
       if (!greenGate || greenSignal <= tuning.edgeThreshold) {
         pixels[i + 3] = 255;
         continue;
@@ -896,7 +933,7 @@ function drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, optio
       pixels[i + 3] = Math.round(alpha * 255);
 
       if (g > maxOther) {
-        const despill = cut * 0.92;
+        const despill = cut * (tuning.despill / 100);
         pixels[i + 1] = Math.round(g - (g - maxOther) * despill);
       }
       continue;
@@ -962,11 +999,11 @@ function drawOverlayEffect(hand, width, height, effect, video) {
   const drawY = state.smoothY - drawHeight * effect.anchorY;
 
   drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
-    glowAlpha: 0,
-    baseAlpha: 1,
-    blendMode: "source-over",
-    glowScale: 1,
-    keyMode: "chromaGreen",
+    glowAlpha: effect.glowAlpha,
+    baseAlpha: 0.98,
+    blendMode: "lighter",
+    glowScale: 1.12,
+    keyMode: "luma",
   });
 }
 
@@ -994,12 +1031,13 @@ function updateDeidaraAnchor(holderHand, width, height) {
     : lerp(state.deidara.smoothSize, nextSize, 0.2);
 }
 
-function drawDeidaraHandVideo(video) {
+function drawDeidaraHandVideo(video, videoKey) {
   if (!video || video.readyState < 2 || state.deidara.smoothSize == null) {
     return;
   }
 
   const effect = EFFECTS.deidara;
+  const tuning = readSavedVideoTuning(videoKey);
   const aspect = video.videoWidth > 0 && video.videoHeight > 0
     ? video.videoWidth / video.videoHeight
     : 1;
@@ -1008,18 +1046,21 @@ function drawDeidaraHandVideo(video) {
   const drawX = state.deidara.smoothX - drawWidth * effect.anchorX;
   const drawY = state.deidara.smoothY - drawHeight * effect.anchorY;
   drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
-    glowAlpha: effect.glowAlpha,
-    baseAlpha: 0.98,
-    blendMode: "lighter",
-    glowScale: 1.12,
+    glowAlpha: 0,
+    baseAlpha: 1,
+    blendMode: "source-over",
+    glowScale: 1,
+    keyMode: "chromaGreen",
+    tuningOverride: tuning,
   });
 }
 
-function drawFullscreenVideo(video, width, height) {
+function drawFullscreenVideo(video, width, height, videoKey) {
   if (!video || video.readyState < 2) {
     return;
   }
 
+  const tuning = readSavedVideoTuning(videoKey);
   const sourceWidth = video.videoWidth || width;
   const sourceHeight = video.videoHeight || height;
   const scaleMultiplier = clamp(getEffectTuning("deidara").fullscreenScale / 100, 0.7, 1.8);
@@ -1035,6 +1076,7 @@ function drawFullscreenVideo(video, width, height) {
     glowScale: 1,
     keyMode: "chromaGreen",
     maxWorkPixels: FULLSCREEN_EFFECT_MAX_WORK_PIXELS,
+    tuningOverride: tuning,
   });
 }
 
@@ -1138,19 +1180,19 @@ function drawDeidaraScene(hands, width, height, now) {
   advanceDeidaraSequence();
 
   if (state.deidara.stage === "spider") {
-    drawFullscreenVideo(state.deidaraVideos.spider, width, height);
+    drawFullscreenVideo(state.deidaraVideos.spider, width, height, "spider");
     return;
   }
 
   if (state.deidara.stage === "blast") {
-    drawFullscreenVideo(state.deidaraVideos.blast, width, height);
+    drawFullscreenVideo(state.deidaraVideos.blast, width, height, "blast");
     return;
   }
 
   drawHandsDebug(hands, width, height);
   const handVideo = state.deidaraVideos.hand;
   if (roles.holder || state.deidara.stage === "hand") {
-    drawDeidaraHandVideo(handVideo);
+    drawDeidaraHandVideo(handVideo, "hand");
   } else {
     resetDeidaraAnchor();
   }
