@@ -88,9 +88,9 @@ const DEFAULT_VIDEO_TUNING_BY_ASSET = {
 };
 const SIZE_CALIBRATION_STORAGE_KEY = "naruto-size-calibration:deidara";
 const DEFAULT_DEIDARA_SIZE_POINTS = [
-  { handSize: 0.3486, scale: 27 },
-  { handSize: 0.551, scale: 50 },
-  { handSize: 0.8449, scale: 70 },
+  { handSize: 0.3855, scale: 26 },
+  { handSize: 0.4168, scale: 30 },
+  { handSize: 0.6346, scale: 41 },
 ];
 const TUNING_LIMITS = {
   scale: { min: 5, max: 240 },
