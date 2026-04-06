@@ -33,7 +33,9 @@ const EFFECTS = {
     handSource: "assets/손.mp4?v=20260406-2359",
     spiderSource: "assets/거미.mp4?v=20260406-2359",
     blastSource: "assets/폭발.mp4",
-    handLeadSeconds: 0.42,
+    handLeadSeconds: 0.55,
+    spiderTransitionMs: 420,
+    spiderOriginScale: 0.76,
     thumbMinRatio: 0.16,
     thumbBaseRatio: 0.18,
     thumbHandRatioScale: 1.0,
@@ -174,6 +176,10 @@ const state = {
     smoothX: null,
     smoothY: null,
     smoothSize: null,
+    spiderStartedAt: 0,
+    spiderOriginX: null,
+    spiderOriginY: null,
+    spiderOriginSize: null,
   },
 };
 
@@ -803,6 +809,10 @@ function resetDeidaraAnchor() {
   state.deidara.smoothX = null;
   state.deidara.smoothY = null;
   state.deidara.smoothSize = null;
+  state.deidara.spiderStartedAt = 0;
+  state.deidara.spiderOriginX = null;
+  state.deidara.spiderOriginY = null;
+  state.deidara.spiderOriginSize = null;
 }
 
 function resetDeidaraSequence() {
@@ -826,11 +836,22 @@ function pauseAllDeidaraVideos() {
 }
 
 function startDeidaraStage(stage) {
-  pauseAllDeidaraVideos();
   state.deidara.stage = stage;
 
   if (stage === "idle") {
+    pauseAllDeidaraVideos();
     return;
+  }
+
+  if (stage === "hand") {
+    pauseAllDeidaraVideos();
+  } else if (stage === "spider") {
+    state.deidara.spiderStartedAt = performance.now();
+    state.deidara.spiderOriginX = state.deidara.smoothX;
+    state.deidara.spiderOriginY = state.deidara.smoothY;
+    state.deidara.spiderOriginSize = state.deidara.smoothSize;
+  } else {
+    pauseAllDeidaraVideos();
   }
 
   const video = state.deidaraVideos[stage];
@@ -1109,7 +1130,8 @@ function updateDeidaraAnchor(holderHand, width, height) {
     : lerp(state.deidara.smoothSize, nextSize, 0.2);
 }
 
-function drawDeidaraHandVideo(video, videoKey) {
+function drawDeidaraHandVideo(video, videoKey, options = {}) {
+  const baseAlpha = typeof options.baseAlpha === "number" ? options.baseAlpha : 1;
   if (!video || video.readyState < 2 || state.deidara.smoothSize == null) {
     return;
   }
@@ -1125,12 +1147,28 @@ function drawDeidaraHandVideo(video, videoKey) {
   const drawY = state.deidara.smoothY - drawHeight * effect.anchorY;
   drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
     glowAlpha: 0,
-    baseAlpha: 1,
+    baseAlpha,
     blendMode: "source-over",
     glowScale: 1,
     keyMode: "chromaGreen",
     tuningOverride: tuning,
   });
+}
+
+function getFullscreenVideoRect(video, width, height, scaleMultiplier) {
+  const sourceWidth = video.videoWidth || width;
+  const sourceHeight = video.videoHeight || height;
+  const scale = Math.max(width / sourceWidth, height / sourceHeight) * FULLSCREEN_STAGE_FILL * scaleMultiplier;
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  const drawX = (width - drawWidth) * 0.5;
+  const drawY = (height - drawHeight) * 0.5;
+  return {
+    drawX,
+    drawY,
+    drawWidth,
+    drawHeight,
+  };
 }
 
 function drawFullscreenVideo(video, width, height, videoKey) {
@@ -1139,14 +1177,53 @@ function drawFullscreenVideo(video, width, height, videoKey) {
   }
 
   const tuning = readSavedVideoTuning(videoKey);
-  const sourceWidth = video.videoWidth || width;
-  const sourceHeight = video.videoHeight || height;
   const scaleMultiplier = clamp(getEffectTuning("deidara").fullscreenScale / 100, 0.7, 1.8);
-  const scale = Math.max(width / sourceWidth, height / sourceHeight) * FULLSCREEN_STAGE_FILL * scaleMultiplier;
-  const drawWidth = sourceWidth * scale;
-  const drawHeight = sourceHeight * scale;
-  const drawX = (width - drawWidth) * 0.5;
-  const drawY = (height - drawHeight) * 0.5;
+  const { drawX, drawY, drawWidth, drawHeight } = getFullscreenVideoRect(
+    video,
+    width,
+    height,
+    scaleMultiplier,
+  );
+  drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
+    glowAlpha: 0,
+    baseAlpha: 1,
+    blendMode: "source-over",
+    glowScale: 1,
+    keyMode: "chromaGreen",
+    maxWorkPixels: FULLSCREEN_EFFECT_MAX_WORK_PIXELS,
+    tuningOverride: tuning,
+  });
+}
+
+function getDeidaraSpiderProgress(now) {
+  const duration = Math.max(1, EFFECTS.deidara.spiderTransitionMs);
+  const raw = clamp((now - state.deidara.spiderStartedAt) / duration, 0, 1);
+  return 1 - Math.pow(1 - raw, 3);
+}
+
+function drawDeidaraSpiderVideo(video, width, height, now) {
+  if (!video || video.readyState < 2) {
+    return;
+  }
+
+  const tuning = readSavedVideoTuning("spider");
+  const scaleMultiplier = clamp(getEffectTuning("deidara").fullscreenScale / 100, 0.7, 1.8);
+  const fullscreenRect = getFullscreenVideoRect(video, width, height, scaleMultiplier);
+  const progress = getDeidaraSpiderProgress(now);
+  const aspect = video.videoWidth > 0 && video.videoHeight > 0
+    ? video.videoWidth / video.videoHeight
+    : 1;
+  const originWidth = Math.max(
+    80,
+    (state.deidara.spiderOriginSize ?? Math.min(width, height) * 0.22) * EFFECTS.deidara.spiderOriginScale,
+  );
+  const originHeight = originWidth / aspect;
+  const originX = (state.deidara.spiderOriginX ?? width * 0.5) - originWidth * 0.5;
+  const originY = (state.deidara.spiderOriginY ?? height * 0.5) - originHeight * 0.48;
+  const drawX = lerp(originX, fullscreenRect.drawX, progress);
+  const drawY = lerp(originY, fullscreenRect.drawY, progress);
+  const drawWidth = lerp(originWidth, fullscreenRect.drawWidth, progress);
+  const drawHeight = lerp(originHeight, fullscreenRect.drawHeight, progress);
   drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
     glowAlpha: 0,
     baseAlpha: 1,
@@ -1178,6 +1255,11 @@ function advanceDeidaraSequence() {
   }
 
   if (state.deidara.stage === "spider") {
+    const handVideo = state.deidaraVideos.hand;
+    const handDuration = Number.isFinite(handVideo?.duration) ? handVideo.duration : 0;
+    if (handVideo && (handDuration <= 0 || handVideo.currentTime < handDuration - 0.03)) {
+      keepVideoPlaying(handVideo);
+    }
     const video = state.deidaraVideos.spider;
     keepVideoPlaying(video);
     const duration = Number.isFinite(video?.duration) ? video.duration : 0;
@@ -1230,7 +1312,9 @@ function drawDeidaraScene(hands, width, height, now) {
     state.cachedDeidaraRoles = null;
   }
 
-  updateDeidaraAnchor(roles.holder, width, height);
+  if (state.deidara.stage !== "spider") {
+    updateDeidaraAnchor(roles.holder, width, height);
+  }
 
   const triggerIsTwo = classifyHandGesture(roles.trigger) === "two";
   if (
@@ -1249,7 +1333,13 @@ function drawDeidaraScene(hands, width, height, now) {
   advanceDeidaraSequence();
 
   if (state.deidara.stage === "spider") {
-    drawFullscreenVideo(state.deidaraVideos.spider, width, height, "spider");
+    drawHandsDebug(hands, width, height);
+    const transitionProgress = getDeidaraSpiderProgress(now);
+    const handAlpha = clamp(1 - transitionProgress / 0.78, 0, 1);
+    if (handAlpha > 0.02) {
+      drawDeidaraHandVideo(state.deidaraVideos.hand, "hand", { baseAlpha: handAlpha });
+    }
+    drawDeidaraSpiderVideo(state.deidaraVideos.spider, width, height, now);
     return;
   }
 
