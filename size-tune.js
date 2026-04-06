@@ -1,9 +1,37 @@
 const SIZE_CALIBRATION_STORAGE_KEY = "naruto-size-calibration:deidara";
+const VIDEO_TUNING_STORAGE_PREFIX = "naruto-video-tuning:";
+const DEIDARA_HAND_EFFECT = {
+  source: "assets/손.mp4",
+  thumbMinRatio: 0.16,
+  thumbBaseRatio: 0.18,
+  thumbHandRatioScale: 1.0,
+  thumbMaxRatio: 0.5,
+  anchorX: 0.5,
+  anchorY: 0.52,
+};
 const DEFAULT_SIZE_POINTS = [
   { handSize: 0.12, scale: 100 },
   { handSize: 0.2, scale: 100 },
   { handSize: 0.3, scale: 100 },
 ];
+const DEFAULT_VIDEO_TUNING = {
+  edgeThreshold: 30,
+  edgeSoftness: 36,
+  alphaPower: 140,
+  greenMin: 28,
+  greenBias: 20,
+  despill: 92,
+};
+const DEFAULT_VIDEO_TUNING_BY_ASSET = {
+  hand: {
+    edgeThreshold: 0,
+    edgeSoftness: 1,
+    alphaPower: 100,
+    greenMin: 13,
+    greenBias: 9,
+    despill: 72,
+  },
+};
 const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
   [0, 5], [5, 6], [6, 7], [7, 8],
@@ -34,11 +62,14 @@ const state = {
   rafId: 0,
   processing: false,
   currentHandSize: null,
+  effectCanvas: document.createElement("canvas"),
+  effectVideo: null,
   trackCanvas: document.createElement("canvas"),
 };
 state.trackCanvas.width = 640;
 state.trackCanvas.height = 360;
 state.trackCtx = state.trackCanvas.getContext("2d", { alpha: false });
+state.effectCtx = state.effectCanvas.getContext("2d", { willReadFrequently: true });
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -60,6 +91,38 @@ function getSavedPoints() {
     }));
   } catch (_error) {
     return DEFAULT_SIZE_POINTS.map((point) => ({ ...point }));
+  }
+}
+
+function getVideoTuningKey(assetKey) {
+  return `${VIDEO_TUNING_STORAGE_PREFIX}${assetKey}`;
+}
+
+function getDefaultVideoTuning(assetKey) {
+  return {
+    ...DEFAULT_VIDEO_TUNING,
+    ...(DEFAULT_VIDEO_TUNING_BY_ASSET[assetKey] ?? {}),
+  };
+}
+
+function readSavedVideoTuning(assetKey) {
+  const defaults = getDefaultVideoTuning(assetKey);
+  try {
+    const raw = window.localStorage.getItem(getVideoTuningKey(assetKey));
+    if (!raw) {
+      return defaults;
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      edgeThreshold: Number.isFinite(Number(parsed?.edgeThreshold)) ? Number(parsed.edgeThreshold) : defaults.edgeThreshold,
+      edgeSoftness: Number.isFinite(Number(parsed?.edgeSoftness)) ? Number(parsed.edgeSoftness) : defaults.edgeSoftness,
+      alphaPower: Number.isFinite(Number(parsed?.alphaPower)) ? Number(parsed.alphaPower) : defaults.alphaPower,
+      greenMin: Number.isFinite(Number(parsed?.greenMin)) ? Number(parsed.greenMin) : defaults.greenMin,
+      greenBias: Number.isFinite(Number(parsed?.greenBias)) ? Number(parsed.greenBias) : defaults.greenBias,
+      despill: Number.isFinite(Number(parsed?.despill)) ? Number(parsed.despill) : defaults.despill,
+    };
+  } catch (_error) {
+    return defaults;
   }
 }
 
@@ -125,6 +188,22 @@ function getLargestHand(results) {
     .sort((a, b) => b.handSize - a.handSize)[0];
 }
 
+function getPalmCenter(landmarks) {
+  const ids = [0, 5, 9, 13, 17];
+  const total = ids.reduce(
+    (acc, id) => {
+      acc.x += landmarks[id].x;
+      acc.y += landmarks[id].y;
+      return acc;
+    },
+    { x: 0, y: 0 },
+  );
+  return {
+    x: total.x / ids.length,
+    y: total.y / ids.length,
+  };
+}
+
 function drawHand(hand, width, height) {
   if (!hand) {
     return;
@@ -156,9 +235,77 @@ function drawHand(hand, width, height) {
   ctx.restore();
 }
 
+function ensureEffectCanvas(workWidth, workHeight) {
+  if (state.effectCanvas.width !== workWidth || state.effectCanvas.height !== workHeight) {
+    state.effectCanvas.width = workWidth;
+    state.effectCanvas.height = workHeight;
+  }
+}
+
+function drawHandOverlay(hand, width, height) {
+  if (!hand || !state.effectVideo || state.effectVideo.readyState < 2) {
+    return;
+  }
+
+  const palm = getPalmCenter(hand.landmarks);
+  const handRatio = hand.handSize;
+  const targetRatio = clamp(
+    DEIDARA_HAND_EFFECT.thumbBaseRatio + handRatio * DEIDARA_HAND_EFFECT.thumbHandRatioScale,
+    DEIDARA_HAND_EFFECT.thumbMinRatio,
+    DEIDARA_HAND_EFFECT.thumbMaxRatio,
+  );
+  const drawWidth = width * targetRatio * (Number(dom.scaleSlider.value) / 100);
+  const aspect = state.effectVideo.videoWidth > 0 && state.effectVideo.videoHeight > 0
+    ? state.effectVideo.videoWidth / state.effectVideo.videoHeight
+    : 1;
+  const drawHeight = drawWidth / aspect;
+  const drawX = palm.x * width - drawWidth * DEIDARA_HAND_EFFECT.anchorX;
+  const drawY = palm.y * height - drawHeight * DEIDARA_HAND_EFFECT.anchorY;
+
+  const workWidth = Math.max(24, Math.round(drawWidth));
+  const workHeight = Math.max(24, Math.round(drawHeight));
+  ensureEffectCanvas(workWidth, workHeight);
+  state.effectCtx.clearRect(0, 0, workWidth, workHeight);
+  state.effectCtx.drawImage(state.effectVideo, 0, 0, workWidth, workHeight);
+
+  const tuning = readSavedVideoTuning("hand");
+  const imageData = state.effectCtx.getImageData(0, 0, workWidth, workHeight);
+  const pixels = imageData.data;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+    const maxOther = Math.max(r, b);
+    const greenSignal = g - maxOther;
+    const greenGate = g > tuning.greenMin && g > r + tuning.greenBias && g > b + tuning.greenBias;
+
+    if (!greenGate || greenSignal <= tuning.edgeThreshold) {
+      pixels[i + 3] = 255;
+      continue;
+    }
+
+    const cut = clamp(
+      (greenSignal - tuning.edgeThreshold) / Math.max(1, tuning.edgeSoftness),
+      0,
+      1,
+    );
+    const alpha = Math.pow(1 - cut, tuning.alphaPower / 100);
+    pixels[i + 3] = Math.round(alpha * 255);
+
+    if (g > maxOther) {
+      const despill = cut * (tuning.despill / 100);
+      pixels[i + 1] = Math.round(g - (g - maxOther) * despill);
+    }
+  }
+
+  state.effectCtx.putImageData(imageData, 0, 0);
+  ctx.drawImage(state.effectCanvas, drawX, drawY, drawWidth, drawHeight);
+}
+
 function renderLoop() {
   const width = dom.canvas.width;
   const height = dom.canvas.height;
+  ctx.clearRect(0, 0, width, height);
   ctx.save();
   ctx.translate(width, 0);
   ctx.scale(-1, 1);
@@ -170,6 +317,7 @@ function renderLoop() {
   dom.readout.textContent = hand
     ? `손 크기: ${hand.handSize.toFixed(4)}`
     : "손 크기: -";
+  drawHandOverlay(hand, width, height);
   drawHand(hand, width, height);
 
   if (!state.processing && state.hands && dom.video.readyState >= 2) {
@@ -223,6 +371,17 @@ async function startCamera() {
   await dom.video.play();
 }
 
+function buildEffectVideo() {
+  const video = document.createElement("video");
+  video.src = DEIDARA_HAND_EFFECT.source;
+  video.loop = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  state.effectVideo = video;
+  video.play().catch(() => {});
+}
+
 function saveSlot(index) {
   if (!Number.isFinite(state.currentHandSize)) {
     return;
@@ -255,6 +414,7 @@ async function boot() {
   updateSliderUi();
   updatePointDump();
   bindEvents();
+  buildEffectVideo();
   await ensureHands();
   await startCamera();
   renderLoop();
