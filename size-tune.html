@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Naruto Cam FX Size Tune</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="tune-shell">
+    <div class="tune-topbar">
+      <a class="back-link" href="./">뒤로</a>
+      <strong class="size-title">데이다라 크기 캘리브레이션</strong>
+    </div>
+
+    <section class="size-layout">
+      <div class="preview-card">
+        <strong>카메라</strong>
+        <canvas class="preview-canvas" id="sizeCanvas" width="640" height="360"></canvas>
+      </div>
+
+      <div class="tune-values">
+        <strong>현재 측정</strong>
+        <p class="size-readout" id="sizeReadout">손 크기: -</p>
+        <label class="control-row">
+          <span>배율</span>
+          <input id="scaleSlider" type="range" min="5" max="240" step="1" value="100">
+          <output id="scaleSliderValue">100%</output>
+        </label>
+      </div>
+    </section>
+
+    <section class="slot-grid">
+      <button class="slot-card" id="saveSlot1" type="button">포인트 1 저장</button>
+      <button class="slot-card" id="saveSlot2" type="button">포인트 2 저장</button>
+      <button class="slot-card" id="saveSlot3" type="button">포인트 3 저장</button>
+    </section>
+
+    <section class="tune-values">
+      <strong>저장된 포인트</strong>
+      <pre id="pointDump"></pre>
+      <button class="tuning-reset" id="resetSizePoints" type="button">기본값</button>
+    </section>
+
+    <video id="sizeVideo" autoplay playsinline muted hidden></video>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="size-tune.js" defer></script>
+</body>
+</html>

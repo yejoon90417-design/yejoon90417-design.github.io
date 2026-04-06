@@ -78,6 +78,12 @@ const DEFAULT_VIDEO_TUNING_BY_ASSET = {
     despill: 72,
   },
 };
+const SIZE_CALIBRATION_STORAGE_KEY = "naruto-size-calibration:deidara";
+const DEFAULT_DEIDARA_SIZE_POINTS = [
+  { handSize: 0.12, scale: 100 },
+  { handSize: 0.2, scale: 100 },
+  { handSize: 0.3, scale: 100 },
+];
 const TUNING_LIMITS = {
   scale: { min: 5, max: 240 },
   edgeThreshold: { min: 0, max: 120 },
@@ -323,6 +329,53 @@ function readSavedVideoTuning(videoKey) {
   } catch (_error) {
     return defaults;
   }
+}
+
+function readSavedDeidaraSizePoints() {
+  try {
+    const raw = window.localStorage.getItem(SIZE_CALIBRATION_STORAGE_KEY);
+    if (!raw) {
+      return DEFAULT_DEIDARA_SIZE_POINTS.map((point) => ({ ...point }));
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length < 2) {
+      return DEFAULT_DEIDARA_SIZE_POINTS.map((point) => ({ ...point }));
+    }
+
+    return parsed
+      .map((point) => ({
+        handSize: Number(point?.handSize),
+        scale: Number(point?.scale),
+      }))
+      .filter((point) => Number.isFinite(point.handSize) && Number.isFinite(point.scale))
+      .sort((a, b) => a.handSize - b.handSize);
+  } catch (_error) {
+    return DEFAULT_DEIDARA_SIZE_POINTS.map((point) => ({ ...point }));
+  }
+}
+
+function getInterpolatedDeidaraScale(handSize) {
+  const points = readSavedDeidaraSizePoints();
+  if (!Number.isFinite(handSize) || points.length === 0) {
+    return 1;
+  }
+
+  if (handSize <= points[0].handSize) {
+    return points[0].scale / 100;
+  }
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const left = points[index];
+    const right = points[index + 1];
+    if (handSize <= right.handSize) {
+      const span = Math.max(0.0001, right.handSize - left.handSize);
+      const ratio = clamp((handSize - left.handSize) / span, 0, 1);
+      return lerp(left.scale, right.scale, ratio) / 100;
+    }
+  }
+
+  return points[points.length - 1].scale / 100;
 }
 
 function getEffectTuning(effectKey = state.selectedEffect) {
@@ -1043,7 +1096,7 @@ function updateDeidaraAnchor(holderHand, width, height) {
     effect.thumbMaxRatio,
   );
   const viewportBase = state.runtime.mobile ? Math.max(width, height) : width;
-  const nextSize = viewportBase * targetRatio * (getEffectTuning("deidara").scale / 100);
+  const nextSize = viewportBase * targetRatio * getInterpolatedDeidaraScale(handRatio);
 
   state.deidara.smoothX = state.deidara.smoothX == null ? baseX : lerp(state.deidara.smoothX, baseX, 0.28);
   state.deidara.smoothY = state.deidara.smoothY == null ? baseY : lerp(state.deidara.smoothY, baseY, 0.24);
