@@ -19,11 +19,15 @@
 
       <div class="hud">
         <button class="back-button" id="backButton" type="button">뒤로</button>
+        <button class="back-button primary-action" id="amaterasuTriggerButton" type="button" hidden>아마테라스 추가 발동</button>
       </div>
+
+      <div class="error-toast" id="errorToast" hidden></div>
     </section>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="app.js" defer></script>
 </body>
 </html>

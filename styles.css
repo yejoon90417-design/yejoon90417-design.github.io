@@ -107,6 +107,12 @@ a {
     linear-gradient(135deg, rgba(255, 185, 118, 0.16), rgba(255, 103, 48, 0.04));
 }
 
+.effect-card.amaterasu::before {
+  background:
+    radial-gradient(circle at 18% 16%, rgba(255, 120, 108, 0.3), transparent 38%),
+    linear-gradient(135deg, rgba(255, 110, 96, 0.18), rgba(34, 10, 16, 0.08));
+}
+
 .effect-card > * {
   position: relative;
   z-index: 1;
@@ -115,6 +121,19 @@ a {
 
 .effect-card strong {
   font-size: 1.9rem;
+}
+
+.effect-card span {
+  margin-top: 8px;
+  opacity: 0.72;
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.effect-card.gaze::before {
+  background:
+    radial-gradient(circle at 18% 16%, rgba(255, 126, 76, 0.28), transparent 38%),
+    linear-gradient(135deg, rgba(255, 126, 76, 0.16), rgba(255, 55, 68, 0.05));
 }
 
 #cameraScreen {
@@ -145,7 +164,9 @@ a {
   left: 18px;
   right: 18px;
   display: flex;
-  justify-content: flex-end;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   pointer-events: none;
 }
 
@@ -347,6 +368,114 @@ a {
   font-size: 0.9rem;
 }
 
+.gaze-shell {
+  min-height: 100vh;
+}
+
+.gaze-screen {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top, rgba(255, 90, 66, 0.18), transparent 32%),
+    radial-gradient(circle at 70% 18%, rgba(255, 169, 72, 0.12), transparent 26%),
+    linear-gradient(180deg, #0b0c10, #020305 72%);
+}
+
+#gazeVideo {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0.001;
+  pointer-events: none;
+}
+
+#gazeStage {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+.gaze-chrome {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: 18px;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: none;
+}
+
+.gaze-panel {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(9, 13, 22, 0.68);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.gaze-panel {
+  width: min(520px, 100%);
+  padding: 18px 20px;
+  border-radius: 24px;
+}
+
+.gaze-kicker {
+  display: block;
+  margin-bottom: 10px;
+  color: #ffbb8a;
+  font-size: 0.76rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.gaze-copy strong {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 1.62rem;
+}
+
+.gaze-copy p {
+  margin: 0;
+  color: rgba(242, 246, 255, 0.86);
+  line-height: 1.5;
+}
+
+.gaze-copy .gaze-note {
+  margin-top: 8px;
+  color: rgba(242, 246, 255, 0.64);
+  font-size: 0.96rem;
+}
+
+.gaze-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
+  pointer-events: auto;
+}
+
+.gaze-actions .back-button,
+.gaze-actions .back-link {
+  pointer-events: auto;
+}
+
+.primary-action {
+  background: linear-gradient(135deg, rgba(255, 122, 66, 0.32), rgba(255, 74, 74, 0.2));
+  border-color: rgba(255, 194, 144, 0.18);
+}
+
+.ghost-action:disabled,
+.primary-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 @media (max-width: 860px) {
   #launcherScreen {
     padding: 18px;
@@ -366,5 +495,28 @@ a {
 
   .slot-grid {
     grid-template-columns: 1fr;
+  }
+
+  .gaze-chrome {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .gaze-panel {
+    width: 100%;
+  }
+
+  .gaze-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 560px) {
+  .gaze-copy strong {
+    font-size: 1.34rem;
+  }
+
+  .gaze-panel {
+    padding: 16px 16px 18px;
   }
 }

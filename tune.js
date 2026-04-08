@@ -7,6 +7,7 @@ const DEFAULT_VIDEO_TUNING = {
   greenBias: 20,
   despill: 92,
 };
+
 const DEFAULT_VIDEO_TUNING_BY_ASSET = {
   hand: {
     edgeThreshold: 0,
@@ -32,6 +33,14 @@ const DEFAULT_VIDEO_TUNING_BY_ASSET = {
     greenBias: 5,
     despill: 84,
   },
+  amaterasu: {
+    edgeThreshold: 0,
+    edgeSoftness: 1,
+    alphaPower: 59,
+    greenMin: 0,
+    greenBias: 0,
+    despill: 0,
+  },
 };
 
 const TUNING_LIMITS = {
@@ -44,9 +53,10 @@ const TUNING_LIMITS = {
 };
 
 const ASSETS = {
-  hand: { label: "손", src: "assets/손.mp4?v=20260406-2359" },
-  spider: { label: "거미", src: "assets/거미.mp4?v=20260407-0023" },
-  blast: { label: "폭발", src: "assets/폭발.mp4?v=20260407-0014" },
+  hand: { label: "손", src: "assets/%EC%86%90.mp4?v=20260406-2359" },
+  spider: { label: "거미", src: "assets/%EA%B1%B0%EB%AF%B8.mp4?v=20260407-0023" },
+  blast: { label: "폭발", src: "assets/%ED%8F%AD%EB%B0%9C.mp4?v=20260407-0014" },
+  amaterasu: { label: "아마테라스", src: "assets/%EC%95%84%EB%A7%88%ED%85%8C%EB%9D%BC%EC%8A%A4.mp4?v=20260408-1530" },
 };
 
 const dom = {
@@ -75,7 +85,7 @@ const resultCtx = dom.resultCanvas.getContext("2d", { willReadFrequently: true }
 const workCanvas = document.createElement("canvas");
 const workCtx = workCanvas.getContext("2d", { willReadFrequently: true });
 
-let selectedAsset = dom.assetSelect.value;
+let selectedAsset = "hand";
 let rafId = 0;
 
 function clamp(value, min, max) {
@@ -162,6 +172,7 @@ function updateControls() {
 
   dom.valueDump.textContent = JSON.stringify({
     asset: selectedAsset,
+    label: ASSETS[selectedAsset].label,
     ...tuning,
   }, null, 2);
 }
@@ -192,7 +203,7 @@ function drawCheckerboard(ctx, width, height) {
 
 function renderFrame() {
   rafId = window.requestAnimationFrame(renderFrame);
-  if (dom.video.readyState < 2) {
+  if (dom.video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
     return;
   }
 
@@ -226,11 +237,7 @@ function renderFrame() {
       continue;
     }
 
-    const cut = clamp(
-      (greenSignal - tuning.edgeThreshold) / Math.max(1, tuning.edgeSoftness),
-      0,
-      1,
-    );
+    const cut = clamp((greenSignal - tuning.edgeThreshold) / Math.max(1, tuning.edgeSoftness), 0, 1);
     const alpha = Math.pow(1 - cut, tuning.alphaPower / 100);
     pixels[i + 3] = Math.round(alpha * 255);
 
@@ -247,11 +254,25 @@ function renderFrame() {
 }
 
 function loadAsset(assetKey) {
+  if (!ASSETS[assetKey]) {
+    return;
+  }
+
   selectedAsset = assetKey;
+  dom.assetSelect.value = assetKey;
   dom.video.src = ASSETS[assetKey].src;
   dom.video.currentTime = 0;
   dom.video.play().catch(() => {});
   updateControls();
+}
+
+function getInitialAsset() {
+  const params = new URLSearchParams(window.location.search);
+  const assetKey = params.get("asset");
+  if (assetKey && ASSETS[assetKey]) {
+    return assetKey;
+  }
+  return dom.assetSelect.value;
 }
 
 function bindEvents() {
@@ -279,6 +300,7 @@ function bindEvents() {
 
 function boot() {
   bindEvents();
+  selectedAsset = getInitialAsset();
   loadAsset(selectedAsset);
   renderFrame();
 }

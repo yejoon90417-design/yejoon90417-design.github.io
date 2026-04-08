@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>아마테라스 시선 테스트</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell gaze-shell">
+    <section class="screen screen-active gaze-screen" id="gazeScreen">
+      <video id="gazeVideo" autoplay playsinline muted></video>
+      <canvas id="gazeStage"></canvas>
+
+      <div class="gaze-chrome">
+        <div class="gaze-panel gaze-copy">
+          <span class="gaze-kicker">아마테라스 프로토타입</span>
+          <strong>얼굴 + 눈 추적</strong>
+          <p id="gazeStatus">시작을 누른 뒤 3x3 점을 눈으로 따라가세요.</p>
+          <p class="gaze-note" id="gazeMetrics">아직 카메라 세션이 없습니다.</p>
+        </div>
+
+        <div class="gaze-actions">
+          <button class="back-button primary-action" id="gazeStartButton" type="button">보정 시작</button>
+          <button class="back-button ghost-action" id="gazeResetButton" type="button" disabled>다시 보정</button>
+          <a class="back-link" href="index.html">뒤로</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="gaze.js" defer></script>
+</body>
+</html>

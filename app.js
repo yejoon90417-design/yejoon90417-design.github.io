@@ -44,9 +44,21 @@ const EFFECTS = {
     anchorY: 0.52,
     glowAlpha: 0.1,
   },
+  amaterasu: {
+    label: "아마테라스",
+    mode: "amaterasu",
+    source: "assets/%EC%95%84%EB%A7%88%ED%85%8C%EB%9D%BC%EC%8A%A4.mp4?v=20260408-1530",
+    baseRatio: 0.7,
+    minRatio: 0.32,
+    maxRatio: 0.92,
+    anchorX: 0.5,
+    anchorY: 0.5,
+    glowAlpha: 0.18,
+  },
 };
 
 const READY_SOUND = "assets/ready.mp3";
+const GAZE_PROFILE_STORAGE_KEY = "naruto-gaze-profile";
 const EASY_OPEN_ARM_WINDOW_MS = 2200;
 const EFFECT_MAX_WORK_PIXELS = 700000;
 const FULLSCREEN_EFFECT_MAX_WORK_PIXELS = 1600000;
@@ -96,8 +108,27 @@ const DEFAULT_VIDEO_TUNING_BY_ASSET = {
     greenBias: 5,
     despill: 84,
   },
+  amaterasu: {
+    edgeThreshold: 0,
+    edgeSoftness: 1,
+    alphaPower: 59,
+    greenMin: 0,
+    greenBias: 0,
+    despill: 0,
+  },
 };
 const SIZE_CALIBRATION_STORAGE_KEY = "naruto-size-calibration:deidara";
+const GAZE_TRACK_INTERVAL_MS = 66;
+const GAZE_FACE_TIMEOUT_MS = 700;
+const GAZE_SMOOTHING_X = 0.18;
+const GAZE_SMOOTHING_Y = 0.16;
+const AMATERASU_MAX_BURSTS = 8;
+const LEFT_IRIS = [468, 469, 470, 471, 472];
+const RIGHT_IRIS = [473, 474, 475, 476, 477];
+const LEFT_UPPER_LID = [386, 385, 384];
+const LEFT_LOWER_LID = [374, 380, 381];
+const RIGHT_UPPER_LID = [159, 158, 157];
+const RIGHT_LOWER_LID = [145, 153, 154];
 const DEFAULT_DEIDARA_SIZE_POINTS = [
   { handSize: 0.3855, scale: 26 },
   { handSize: 0.4168, scale: 30 },
@@ -125,6 +156,7 @@ const dom = {
   canvas: document.getElementById("cameraCanvas"),
   video: document.getElementById("cameraVideo"),
   backButton: document.getElementById("backButton"),
+  amaterasuTriggerButton: document.getElementById("amaterasuTriggerButton"),
   tuningScale: document.getElementById("tuningScale"),
   tuningScaleValue: document.getElementById("tuningScaleValue"),
   tuningEdgeThreshold: document.getElementById("tuningEdgeThreshold"),
@@ -146,11 +178,14 @@ const state = {
   stream: null,
   hands: null,
   latestResults: null,
+  latestGazeFeatures: null,
   running: false,
   starting: false,
   processing: false,
+  faceProcessing: false,
   rafId: 0,
   lastHandSendAt: 0,
+  lastFaceSendAt: 0,
   gateArmedUntil: 0,
   effectVisible: false,
   effectPlaybackActive: false,
@@ -171,6 +206,9 @@ const state = {
   effectAudioFinished: false,
   trackCanvas: null,
   trackCtx: null,
+  faceCanvas: null,
+  faceCtx: null,
+  faceMesh: null,
   maskedFrameCaches: new WeakMap(),
   deidaraVideos: {
     hand: null,
@@ -188,6 +226,18 @@ const state = {
     spiderOriginY: null,
     spiderOriginSize: null,
   },
+  amaterasu: {
+    markerX: 0.5,
+    markerY: 0.5,
+    burstX: 0.5,
+    burstY: 0.5,
+    bursts: [],
+    visible: false,
+    active: false,
+    triggerHeld: false,
+    faceSeenAt: 0,
+    profile: null,
+  },
 };
 
 function clamp(value, min, max) {
@@ -202,26 +252,30 @@ function createVideoElement(src, options = {}) {
   const {
     muted = true,
     volume = 1.0,
+    loop = false,
+    pauseOnLoad = true,
   } = options;
   const video = document.createElement("video");
   video.src = src;
-  video.loop = false;
+  video.loop = loop;
   video.defaultMuted = muted;
   video.muted = muted;
   video.volume = volume;
   video.playsInline = true;
   video.preload = "auto";
   video.crossOrigin = "anonymous";
-  video.addEventListener("loadeddata", () => {
-    if (video.currentTime !== 0) {
-      try {
-        video.currentTime = 0;
-      } catch (_error) {
-        // ignore
+  if (pauseOnLoad) {
+    video.addEventListener("loadeddata", () => {
+      if (video.currentTime !== 0) {
+        try {
+          video.currentTime = 0;
+        } catch (_error) {
+          // ignore
+        }
       }
-    }
-    video.pause();
-  });
+      video.pause();
+    });
+  }
   return video;
 }
 
@@ -351,6 +405,176 @@ function readSavedVideoTuning(videoKey) {
   } catch (_error) {
     return defaults;
   }
+}
+
+function readSavedGazeProfile() {
+  try {
+    const raw = window.localStorage.getItem(GAZE_PROFILE_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw);
+    const model = parsed?.model;
+    const bias = parsed?.bias ?? {};
+    if (
+      !model
+      || !Array.isArray(model.mean)
+      || !Array.isArray(model.deviation)
+      || !Array.isArray(model.weightsX)
+      || !Array.isArray(model.weightsY)
+    ) {
+      return null;
+    }
+
+    return {
+      model,
+      bias: {
+        x: Number.isFinite(Number(bias.x)) ? Number(bias.x) : 0,
+        y: Number.isFinite(Number(bias.y)) ? Number(bias.y) : 0,
+      },
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function averageFacePoint(landmarks, indices) {
+  const point = { x: 0, y: 0, z: 0 };
+  for (const index of indices) {
+    point.x += landmarks[index].x;
+    point.y += landmarks[index].y;
+    point.z += landmarks[index].z ?? 0;
+  }
+  const scale = 1 / indices.length;
+  point.x *= scale;
+  point.y *= scale;
+  point.z *= scale;
+  return point;
+}
+
+function subtractPoint(a, b) {
+  return {
+    x: a.x - b.x,
+    y: a.y - b.y,
+  };
+}
+
+function dotPoint(a, b) {
+  return a.x * b.x + a.y * b.y;
+}
+
+function normalizePoint(vector) {
+  const length = Math.hypot(vector.x, vector.y) || 1;
+  return {
+    x: vector.x / length,
+    y: vector.y / length,
+    length,
+  };
+}
+
+function buildEyeFeatureSet(landmarks, config) {
+  const outer = landmarks[config.outer];
+  const inner = landmarks[config.inner];
+  const top = averageFacePoint(landmarks, config.top);
+  const bottom = averageFacePoint(landmarks, config.bottom);
+  const iris = averageFacePoint(landmarks, config.iris);
+  const eyeCenter = {
+    x: (outer.x + inner.x + top.x + bottom.x) * 0.25,
+    y: (outer.y + inner.y + top.y + bottom.y) * 0.25,
+  };
+
+  const horizontalVector = subtractPoint(inner, outer);
+  const verticalVector = subtractPoint(bottom, top);
+  const horizontalAxis = normalizePoint(horizontalVector);
+  const verticalAxis = normalizePoint(verticalVector);
+
+  if (horizontalAxis.length < 0.01 || verticalAxis.length < 0.003) {
+    return null;
+  }
+
+  const irisOffset = subtractPoint(iris, eyeCenter);
+  return {
+    center: eyeCenter,
+    horizontal: dotPoint(irisOffset, horizontalAxis) / (horizontalAxis.length * 0.5),
+    vertical: dotPoint(irisOffset, verticalAxis) / (verticalAxis.length * 0.5),
+    openness: verticalAxis.length / horizontalAxis.length,
+  };
+}
+
+function buildGazeFeatureVector(landmarks) {
+  const leftEye = buildEyeFeatureSet(landmarks, {
+    outer: 263,
+    inner: 362,
+    top: LEFT_UPPER_LID,
+    bottom: LEFT_LOWER_LID,
+    iris: LEFT_IRIS,
+  });
+  const rightEye = buildEyeFeatureSet(landmarks, {
+    outer: 33,
+    inner: 133,
+    top: RIGHT_UPPER_LID,
+    bottom: RIGHT_LOWER_LID,
+    iris: RIGHT_IRIS,
+  });
+
+  if (!leftEye || !rightEye) {
+    return null;
+  }
+
+  const nose = landmarks[1];
+  const betweenEyes = averageFacePoint(landmarks, [168]);
+  const interocular = dist(leftEye.center, rightEye.center);
+  if (interocular < 0.03) {
+    return null;
+  }
+
+  const avgHorizontal = (leftEye.horizontal + rightEye.horizontal) * 0.5;
+  const avgVertical = (leftEye.vertical + rightEye.vertical) * 0.5;
+  const headX = (nose.x - betweenEyes.x) / interocular;
+  const headY = (nose.y - betweenEyes.y) / interocular;
+
+  return [
+    avgHorizontal,
+    avgVertical,
+    leftEye.horizontal,
+    rightEye.horizontal,
+    leftEye.vertical,
+    rightEye.vertical,
+    headX,
+    headY,
+    interocular,
+    leftEye.openness,
+    rightEye.openness,
+    avgHorizontal * avgVertical,
+    avgHorizontal * headX,
+    avgVertical * headY,
+    headX * headY,
+  ];
+}
+
+function predictSavedGaze(profile, features) {
+  const { model, bias } = profile ?? {};
+  if (!model || !Array.isArray(features) || !features.length) {
+    return null;
+  }
+
+  const row = [1];
+  for (let index = 0; index < features.length; index += 1) {
+    row.push((features[index] - model.mean[index]) / model.deviation[index]);
+  }
+
+  let x = 0;
+  let y = 0;
+  for (let index = 0; index < row.length; index += 1) {
+    x += row[index] * model.weightsX[index];
+    y += row[index] * model.weightsY[index];
+  }
+
+  return {
+    x: clamp(x + (bias?.x ?? 0), 0.02, 0.98),
+    y: clamp(y + (bias?.y ?? 0), 0.02, 0.98),
+  };
 }
 
 function readSavedDeidaraSizePoints() {
@@ -500,7 +724,7 @@ function showError(message) {
 
 function buildEffectVideos() {
   Object.entries(EFFECTS).forEach(([key, effect]) => {
-    if (effect.mode === "overlay" && effect.source) {
+    if ((effect.mode === "overlay" || effect.mode === "amaterasu") && effect.source) {
       state.effectVideos[key] = createVideoElement(effect.source);
     }
 
@@ -513,6 +737,7 @@ function buildEffectVideos() {
         }
       });
     }
+
   });
 
   const deidara = EFFECTS.deidara;
@@ -558,6 +783,46 @@ async function ensureHands() {
 
   state.hands = hands;
   return hands;
+}
+
+async function ensureFaceMesh() {
+  if (state.faceMesh) {
+    return state.faceMesh;
+  }
+
+  if (typeof window.FaceMesh !== "function") {
+    throw new Error("FaceMesh is unavailable");
+  }
+
+  const faceMesh = new window.FaceMesh({
+    locateFile(file) {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+    },
+  });
+
+  faceMesh.setOptions({
+    maxNumFaces: 1,
+    refineLandmarks: true,
+    minDetectionConfidence: state.runtime.mobile ? 0.45 : 0.6,
+    minTrackingConfidence: state.runtime.mobile ? 0.4 : 0.55,
+  });
+
+  faceMesh.onResults((results) => {
+    const landmarks = results.multiFaceLandmarks?.[0];
+    if (!landmarks) {
+      state.latestGazeFeatures = null;
+      return;
+    }
+
+    const vector = buildGazeFeatureVector(landmarks);
+    state.latestGazeFeatures = vector;
+    if (vector) {
+      state.amaterasu.faceSeenAt = performance.now();
+    }
+  });
+
+  state.faceMesh = faceMesh;
+  return faceMesh;
 }
 
 function resizeCanvas() {
@@ -810,6 +1075,68 @@ function resetSmoothing() {
   state.smoothX = null;
   state.smoothY = null;
   state.smoothSize = null;
+}
+
+function disposeAmaterasuBurst(burst) {
+  const video = burst?.video;
+  if (!video) {
+    return;
+  }
+
+  video.pause();
+  video.removeAttribute("src");
+  if (typeof video.load === "function") {
+    try {
+      video.load();
+    } catch (_error) {
+      // ignore cleanup failures
+    }
+  }
+}
+
+function stopAmaterasuPlayback() {
+  state.amaterasu.active = false;
+  state.amaterasu.bursts.forEach((burst) => {
+    disposeAmaterasuBurst(burst);
+  });
+  state.amaterasu.bursts = [];
+  const video = state.effectVideos.amaterasu;
+  if (!video) {
+    return;
+  }
+
+  video.pause();
+  try {
+    video.currentTime = 0;
+  } catch (_error) {
+    // ignore seek errors
+  }
+}
+
+function updateAmaterasuTriggerButton() {
+  if (!dom.amaterasuTriggerButton) {
+    return;
+  }
+
+  dom.amaterasuTriggerButton.hidden = true;
+  dom.amaterasuTriggerButton.disabled = true;
+}
+
+function resetAmaterasuState() {
+  state.amaterasu.markerX = 0.5;
+  state.amaterasu.markerY = 0.5;
+  state.amaterasu.burstX = 0.5;
+  state.amaterasu.burstY = 0.5;
+  state.amaterasu.visible = false;
+  state.amaterasu.active = false;
+  state.amaterasu.triggerHeld = false;
+  state.amaterasu.faceSeenAt = 0;
+  state.amaterasu.profile = null;
+  state.latestGazeFeatures = null;
+  state.faceProcessing = false;
+  state.lastFaceSendAt = 0;
+  stopAmaterasuPlayback();
+  state.amaterasu.bursts = [];
 }
 
 function resetDeidaraAnchor() {
@@ -1172,6 +1499,182 @@ function drawOverlayEffect(hand, width, height, effect, video) {
   });
 }
 
+function updateAmaterasuMarker(width, height, now) {
+  const profile = state.amaterasu.profile;
+  if (!profile) {
+    state.amaterasu.visible = true;
+    return;
+  }
+
+  if (!state.latestGazeFeatures || now - state.amaterasu.faceSeenAt > GAZE_FACE_TIMEOUT_MS) {
+    state.amaterasu.visible = true;
+    return;
+  }
+
+  const prediction = predictSavedGaze(profile, state.latestGazeFeatures);
+  if (!prediction) {
+    state.amaterasu.visible = true;
+    return;
+  }
+
+  state.amaterasu.markerX = lerp(state.amaterasu.markerX, prediction.x, GAZE_SMOOTHING_X);
+  state.amaterasu.markerY = lerp(state.amaterasu.markerY, prediction.y, GAZE_SMOOTHING_Y);
+  state.amaterasu.visible = true;
+}
+
+function drawAmaterasuMarker(width, height) {
+  if (!state.amaterasu.visible) {
+    return;
+  }
+
+  const x = state.amaterasu.markerX * width;
+  const y = state.amaterasu.markerY * height;
+  const isActive = state.amaterasu.active || state.amaterasu.bursts.length > 0;
+  const radius = isActive ? 30 : 22;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.shadowBlur = isActive ? 38 : 26;
+  ctx.shadowColor = isActive
+    ? "rgba(255, 96, 86, 0.9)"
+    : "rgba(255, 110, 92, 0.6)";
+
+  ctx.beginPath();
+  ctx.fillStyle = isActive
+    ? "rgba(255, 98, 88, 0.2)"
+    : "rgba(255, 255, 255, 0.08)";
+  ctx.arc(0, 0, radius * 0.7, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.strokeStyle = "rgba(255, 210, 196, 0.92)";
+  ctx.lineWidth = 2.5;
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.42)";
+  ctx.lineWidth = 1.2;
+  ctx.moveTo(-radius - 12, 0);
+  ctx.lineTo(radius + 12, 0);
+  ctx.moveTo(0, -radius - 12);
+  ctx.lineTo(0, radius + 12);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function startAmaterasuBurst() {
+  const effect = EFFECTS.amaterasu;
+  if (!effect?.source) {
+    return;
+  }
+
+  state.amaterasu.burstX = state.amaterasu.markerX;
+  state.amaterasu.burstY = state.amaterasu.markerY;
+  const burstVideo = createVideoElement(effect.source, {
+    loop: true,
+    pauseOnLoad: false,
+  });
+  const burst = {
+    x: state.amaterasu.burstX,
+    y: state.amaterasu.burstY,
+    video: burstVideo,
+  };
+  state.amaterasu.bursts.push(burst);
+  if (state.amaterasu.bursts.length > AMATERASU_MAX_BURSTS) {
+    const oldestBurst = state.amaterasu.bursts.shift();
+    disposeAmaterasuBurst(oldestBurst);
+  }
+  state.amaterasu.active = true;
+  playReadyAudio();
+
+  try {
+    burstVideo.currentTime = 0;
+  } catch (_error) {
+    // ignore seek errors
+  }
+  burstVideo.play().catch(() => {});
+}
+
+function triggerAmaterasuAtMarker() {
+  if (state.selectedEffect !== "amaterasu") {
+    return;
+  }
+
+  if (!state.amaterasu.visible) {
+    showError("시선 표식이 아직 준비되지 않았습니다.");
+    return;
+  }
+
+  showError("");
+  startAmaterasuBurst();
+}
+
+function drawAmaterasuEffect(width, height, effect) {
+  if (!state.amaterasu.bursts.length) {
+    state.amaterasu.active = false;
+    return;
+  }
+
+  state.amaterasu.active = true;
+  const scaleMultiplier = clamp(getEffectTuning("amaterasu").scale / 100, 0.08, 2.4);
+  const drawWidth = Math.min(width, height) * effect.baseRatio * scaleMultiplier;
+  const tuning = readSavedVideoTuning("amaterasu");
+
+  state.amaterasu.bursts.forEach((burst) => {
+    const video = burst.video;
+    if (!video) {
+      return;
+    }
+
+    const aspect = video.videoWidth > 0 && video.videoHeight > 0
+      ? video.videoWidth / video.videoHeight
+      : 1;
+    const drawHeight = drawWidth / aspect;
+    const drawX = burst.x * width - drawWidth * effect.anchorX;
+    const drawY = burst.y * height - drawHeight * effect.anchorY;
+
+    if (video.readyState >= 2) {
+      drawMaskedEffectFrame(video, drawX, drawY, drawWidth, drawHeight, {
+        glowAlpha: effect.glowAlpha,
+        baseAlpha: 1,
+        blendMode: "source-over",
+        glowScale: 1.12,
+        keyMode: "chromaGreen",
+        tuningOverride: tuning,
+      });
+    }
+
+    if (video.readyState >= 2 && video.paused) {
+      video.play().catch(() => {});
+    }
+  });
+}
+
+function drawAmaterasuScene(hands, width, height, now) {
+  let rightHand = pickRightHand(hands);
+  if (rightHand) {
+    state.cachedRightHand = rightHand;
+    state.cachedRightHandAt = now;
+  } else if (state.cachedRightHand && now - state.cachedRightHandAt <= state.runtime.handLostGraceMs) {
+    rightHand = state.cachedRightHand;
+  } else {
+    state.cachedRightHand = null;
+  }
+
+  updateAmaterasuMarker(width, height, now);
+  const triggerIsTwo = classifyHandGesture(rightHand) === "two";
+  if (triggerIsTwo && !state.amaterasu.triggerHeld && state.amaterasu.visible) {
+    showError("");
+    startAmaterasuBurst();
+  }
+  state.amaterasu.triggerHeld = triggerIsTwo;
+
+  drawAmaterasuEffect(width, height, EFFECTS.amaterasu);
+  drawAmaterasuMarker(width, height);
+  drawHandsDebug(hands, width, height);
+}
+
 function updateDeidaraAnchor(holderHand, width, height) {
   if (!holderHand) {
     return;
@@ -1458,6 +1961,13 @@ function drawFrame() {
     return;
   }
 
+  if (effect.mode === "amaterasu") {
+    syncEffectPlayback(false);
+    syncEffectAudio(false);
+    drawAmaterasuScene(hands, width, height, now);
+    return;
+  }
+
   drawOverlayScene(hands, width, height, now);
 }
 
@@ -1473,6 +1983,7 @@ function renderLoop() {
     state.hands
     && dom.video.readyState >= 2
     && !state.processing
+    && !state.faceProcessing
     && shouldTrackHands()
     && now - state.lastHandSendAt >= state.runtime.trackIntervalMs
   ) {
@@ -1487,6 +1998,30 @@ function renderLoop() {
       })
       .finally(() => {
         state.processing = false;
+      });
+  }
+
+  if (
+    state.faceMesh
+    && dom.video.readyState >= 2
+    && !state.faceProcessing
+    && !state.processing
+    && state.faceCanvas
+    && state.faceCtx
+    && now - state.lastFaceSendAt >= GAZE_TRACK_INTERVAL_MS
+  ) {
+    state.faceProcessing = true;
+    state.lastFaceSendAt = now;
+    state.faceCtx.drawImage(dom.video, 0, 0, state.faceCanvas.width, state.faceCanvas.height);
+    state.faceMesh
+      .send({ image: state.faceCanvas })
+      .catch((error) => {
+        console.error(error);
+        showError("시선 추적이 중단되었습니다. 아마테라스를 다시 열어주세요.");
+        stopFaceTracking();
+      })
+      .finally(() => {
+        state.faceProcessing = false;
       });
   }
 
@@ -1512,13 +2047,27 @@ async function startCamera() {
   await dom.video.play();
 }
 
+function stopFaceTracking() {
+  state.faceProcessing = false;
+  state.lastFaceSendAt = 0;
+  state.latestGazeFeatures = null;
+  if (!state.faceMesh) {
+    return;
+  }
+
+  if (typeof state.faceMesh.close === "function") {
+    state.faceMesh.close();
+  }
+  state.faceMesh = null;
+}
+
 async function warmSelectedMedia() {
   const effect = EFFECTS[state.selectedEffect];
   if (!effect) {
     return;
   }
 
-  if (effect.mode === "overlay") {
+  if (effect.mode === "overlay" || effect.mode === "amaterasu") {
     const video = state.effectVideos[state.selectedEffect];
     if (video) {
       video.pause();
@@ -1557,13 +2106,29 @@ async function startExperience(effectKey) {
   stopReadyAudio();
   resetSmoothing();
   resetDeidaraSequence();
+  resetAmaterasuState();
   state.deidara.triggerHeld = false;
   updateTuningUi();
+  updateAmaterasuTriggerButton();
   setScreen("camera");
   resizeCanvas();
 
+  if (effectKey === "amaterasu") {
+    state.amaterasu.profile = readSavedGazeProfile();
+    if (!state.amaterasu.profile) {
+      showError("시선 테스트를 먼저 완료하세요. 저장된 보정값이 없습니다.");
+    } else {
+      showError("");
+    }
+  }
+
   try {
     await ensureHands();
+    if (effectKey === "amaterasu") {
+      await ensureFaceMesh();
+    } else {
+      stopFaceTracking();
+    }
     await startCamera();
     await warmSelectedMedia();
     state.running = true;
@@ -1610,11 +2175,14 @@ function stopExperience() {
   stopReadyAudio();
   resetSmoothing();
   resetDeidaraSequence();
+  resetAmaterasuState();
   state.deidara.triggerHeld = false;
   syncEffectPlayback(false);
   syncEffectAudio(false);
+  updateAmaterasuTriggerButton();
   Object.values(state.effectVideos).forEach((video) => video.pause());
   pauseAllDeidaraVideos();
+  stopFaceTracking();
   stopCamera();
   window.location.href = "./";
 }
@@ -1622,6 +2190,10 @@ function stopExperience() {
 function bindEvents() {
   dom.backButton?.addEventListener("click", () => {
     stopExperience();
+  });
+
+  dom.amaterasuTriggerButton?.addEventListener("click", () => {
+    triggerAmaterasuAtMarker();
   });
 
   [
@@ -1645,7 +2217,10 @@ function bindEvents() {
   });
 
   window.addEventListener("resize", resizeCanvas);
-  window.addEventListener("beforeunload", stopCamera);
+  window.addEventListener("beforeunload", () => {
+    stopFaceTracking();
+    stopCamera();
+  });
 }
 
 function boot() {
@@ -1663,6 +2238,15 @@ function boot() {
   trackCtx.imageSmoothingQuality = "low";
   state.trackCanvas = trackCanvas;
   state.trackCtx = trackCtx;
+
+  const faceCanvas = document.createElement("canvas");
+  faceCanvas.width = state.runtime.trackWidth;
+  faceCanvas.height = state.runtime.trackHeight;
+  const faceCtx = faceCanvas.getContext("2d", { alpha: false });
+  faceCtx.imageSmoothingEnabled = true;
+  faceCtx.imageSmoothingQuality = "low";
+  state.faceCanvas = faceCanvas;
+  state.faceCtx = faceCtx;
 
   buildEffectVideos();
   bindEvents();

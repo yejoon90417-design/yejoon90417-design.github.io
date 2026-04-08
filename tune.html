@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Naruto Cam FX Tune</title>
+  <title>Naruto Cam FX 영상 튜닝</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -14,6 +14,7 @@
         <option value="hand">손</option>
         <option value="spider">거미</option>
         <option value="blast">폭발</option>
+        <option value="amaterasu">아마테라스</option>
       </select>
     </div>
 
@@ -24,49 +25,49 @@
       </div>
 
       <div class="preview-card">
-        <strong>제거 결과</strong>
+        <strong>배경 제거 결과</strong>
         <canvas class="preview-canvas checkerboard" id="resultCanvas" width="640" height="360"></canvas>
       </div>
     </section>
 
     <section class="tune-controls">
       <label class="control-row">
-        <span>배경컷</span>
+        <span>경계</span>
         <input id="edgeThreshold" type="range" min="0" max="120" step="1" value="30">
         <output id="edgeThresholdValue">30</output>
       </label>
 
       <label class="control-row">
-        <span>테두리</span>
+        <span>부드</span>
         <input id="edgeSoftness" type="range" min="1" max="120" step="1" value="36">
         <output id="edgeSoftnessValue">36</output>
       </label>
 
       <label class="control-row">
-        <span>컷강도</span>
+        <span>알파</span>
         <input id="alphaPower" type="range" min="50" max="300" step="1" value="140">
         <output id="alphaPowerValue">1.40</output>
       </label>
 
       <label class="control-row">
-        <span>최소초록</span>
+        <span>초록최소</span>
         <input id="greenMin" type="range" min="0" max="180" step="1" value="28">
         <output id="greenMinValue">28</output>
       </label>
 
       <label class="control-row">
-        <span>초록우세</span>
+        <span>초록편차</span>
         <input id="greenBias" type="range" min="0" max="120" step="1" value="20">
         <output id="greenBiasValue">20</output>
       </label>
 
       <label class="control-row">
-        <span>디스필</span>
+        <span>탈색</span>
         <input id="despill" type="range" min="0" max="100" step="1" value="92">
         <output id="despillValue">92%</output>
       </label>
 
-      <button class="tuning-reset" id="resetButton" type="button">기본값</button>
+      <button class="tuning-reset" id="resetButton" type="button">초기화</button>
     </section>
 
     <section class="tune-values">
